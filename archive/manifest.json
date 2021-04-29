@@ -1,0 +1,21 @@
+{
+    "name": "archive",
+    "id": 20000,
+    "commands": [
+        {
+            "theme": "archive",
+            "syntax": "archive read(&T;&T;&J):J",
+            "threadSafe": true
+        },
+        {
+            "theme": "archive",
+            "syntax": "archive write(&T;&T;&J):J",
+            "threadSafe": true
+        },
+        {
+            "theme": "archive",
+            "syntax": "archive version:J",
+            "threadSafe": true
+        }
+    ]
+}
