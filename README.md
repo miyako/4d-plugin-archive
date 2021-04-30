@@ -13,7 +13,7 @@ The purpose of this project is to support `.7z` and other archive formats to sto
 
 The operation is typically performed on the server and may take a while to complete.
 
-The high CPU needed for the compression should have minimal impact on server performance.
+The high CPU needed for compression should have minimal impact on server performance.
 
 #### Design principle
 
