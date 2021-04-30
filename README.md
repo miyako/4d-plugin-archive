@@ -35,4 +35,4 @@ Tested with 4D v17.5
 * `2,667` items
 * `107,242,571` bytes .7z
 * `438,374,385` restored (archive utility, double click Finder) 
-* fail; `Chromium Embedded Framework.framework` is missing
+* fault: `Chromium Embedded Framework.framework` is missing
