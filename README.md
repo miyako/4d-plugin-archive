@@ -33,5 +33,5 @@ Tested with 4D v17.5
 
 * `2,667` items
 * `107,242,571` bytes .7z
-* `438,374,385` restored
+* `438,374,385` restored (archive utility, double click Finder) 
 * `440,682,781` original (fail; `Chromium Embedded Framework.framework` is missing)
