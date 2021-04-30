@@ -14,3 +14,7 @@ The purpose of this project is to support `.7z` and other archive formats to sto
 In order not to slow down the server while compression is ongoing, and even if the application is running in interpretative mode, the plugin should perform compression in a **background thread**.
 
 Instead of a callback method, the plugin should run asynchronously; the command should return a reference immediately, which can be used in 4D to query status at any time.
+
+#### Technology
+
+[libarchive](https://www.libarchive.org)
