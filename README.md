@@ -11,6 +11,10 @@ For standard archives, the native `zip` commands are sufficient; there is no nee
 
 The purpose of this project is to support `.7z` and other archive formats to store away large but highly compressable files such as `.4BK`.
 
+The operation is typically performed on the server and may take a while to complete.
+
+The high CPU needed for the compression should have minimal impact on server performance.
+
 #### Design principle
 
 In order not to slow down the server while compression is ongoing, and even if the application is running in interpretative mode, the plugin should perform compression in a **background thread**.
