@@ -28,3 +28,10 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 #### Special Considerations
 
 When creating an archive, irrespective of the format, all symbolic links should be add at the end. This is because 4D.app contains a symbolic link (`Chromium Embedded Framework.framework`) that links to an item that is typically listed later in the catalog. Processing items in alphabetical order would risk missing a symbolic link. 
+
+Tested with 4D v17.5 
+
+* `2,667` items
+* `107,242,571` bytes .7z
+* `438,374,385` restored
+* `440,682,781` original (fail)
