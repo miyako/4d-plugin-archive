@@ -7,13 +7,13 @@ Utility based on libarchive
 
 `.4darchive` is a proprietary format that works with a `cache.xml`, but it will soon be replaced by `.zip`.
 
-For standard archives, the native `zip` commands are sufficient; there is no need for a plugin.
+For standard archives, the native `zip` commands are sufficient; **there is no need for a plugin**.
 
-The purpose of this project is to support `.7z` and other archive formats to store away large but highly compressable files such as `.4BK`.
+The purpose of this project is to support `.7z` and other archive formats to store away **large but highly compressable** files such as `.4BK`.
 
-The operation is typically performed on the server and may take a while to complete.
+The operation is typically performed on the server, require significant computation power and may take a while to complete.
 
-The impact of high CPU needed for performing compression on the server should be minimal.
+Nevertheless impact on server performance should be minimal.
 
 #### Design principle
 
