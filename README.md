@@ -17,7 +17,7 @@ Nevertheless its **impact on server performance** should be minimal.
 
 #### Design principle
 
-In order not to slow down the server while compression is ongoing, and even if the application is running in interpretative mode, the plugin should perform compression in a **background thread**.
+In order not to slow down the server during compression, and in order to be performant even if the application is running in interpretative mode, the plugin should perform compression in a **background thread**.
 
 Instead of a callback method, the plugin should run asynchronously; the command should return a reference immediately, which can be used in 4D to query status at any time.
 
