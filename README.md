@@ -36,3 +36,11 @@ Tested with 4D v17.5
 * `107,242,571` bytes .7z
 * `438,374,385` restored (archive utility, double click Finder) 
 * fault: `Chromium Embedded Framework.framework` is missing
+
+It contains dot-dot
+
+```
+Components/WebViewerCEF.bundle/Contents/Frameworks/Chromium Embedded Framework.framework
+=>/Applications/4D v17.5/4D.app/Contents/Frameworks/Chromium Embedded Framework.framework
+=>../Native Components/WebViewerCEF.bundle/Contents/Frameworks/Chromium Embedded Framework.framework
+```
