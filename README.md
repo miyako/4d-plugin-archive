@@ -13,7 +13,7 @@ The purpose of this project is to support `.7z` and other archive formats to sto
 
 The operation is typically performed on the server, require significant computation power and may take a while to complete.
 
-Nevertheless impact on server performance should be minimal.
+Nevertheless its impact on server performance should be minimal.
 
 #### Design principle
 
