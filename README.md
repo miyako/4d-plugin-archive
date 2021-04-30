@@ -34,4 +34,4 @@ Tested with 4D v17.5
 * `2,667` items
 * `107,242,571` bytes .7z
 * `438,374,385` restored
-* `440,682,781` original (fail)
+* `440,682,781` original (fail; `Chromium Embedded Framework.framework` is missing)
