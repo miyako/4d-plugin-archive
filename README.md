@@ -5,7 +5,7 @@ Utility based on libarchive
 
 4D `zip` commands are based on [nih-at/libzip](https://github.com/nih-at/libzip).
 
-`.4darchive` is a proprietary format that works with a `cache.xml` file, but it will soon be replaced by `.zip`.
+`.4darchive` is a proprietary format that works with a `cache.xml` file, but will soon be replaced by `.zip`.
 
 For standard archives, the native `zip` commands are sufficient; **there is no need for a plugin**.
 
