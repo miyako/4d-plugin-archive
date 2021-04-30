@@ -24,3 +24,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 #### Technology
 
 [libarchive](https://www.libarchive.org)
+
+#### Special Considerations
+
+When creating an archive, irrespective of the format, all symbolic links should be add at the end. This is because 4D.app contains a symbolic link (`Chromium Embedded Framework.framework`) that links to an item that is typically listed later in the catalog. Processing items in alphabetical order would risk missing a symbolic link. 
