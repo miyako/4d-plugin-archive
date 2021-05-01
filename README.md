@@ -50,7 +50,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 
  #### Archive Test
  
- #### Tested wth 4D.app (v17.5)
+* Tested wth 4D.app (v17.5)
 * 2,667 files 
 * .7z format
 * 107,241,021 bytes (117.4 MB)
@@ -61,3 +61,6 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 `4D.app/Content` size is identical (438,375,138)  
 difference seems to be from platform specific attributes.  
 the app lanches successfully.
+
+* Tested wth 4D.app (v17.5)
+* 438,375,138 
