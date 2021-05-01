@@ -47,3 +47,16 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tgz = .tar.gz
   * .tar.bz2
   * .tar.xz
+
+ #### Test
+ 
+ #### Tested wth 4D.app (v17.5)
+* 2,667 files 
+* .7z format
+* 107,241,021 bytes (117.4 MB)
+* 440,682,781 bytes original (446.8 MB)
+* Finder double click unarchive 
+* 438,375,138 bytes (2,307,643 smaller than original)
+
+`4D.app/Content` size is identical (438,375,138)
+difference seems to be platform specific attributes.
