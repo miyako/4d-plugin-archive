@@ -31,22 +31,19 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * `path.at(0) == '.'`
   * `path.find("/.") != std::string::npos`
 
-#### Special Considerations
+* Options for archive:
+  * skipHidden (default=false) 
+  * keepParent (default=false) 
+  * format (default=.7z) 
 
-The symbolic link (`Chromium Embedded Framework.framework`) inside 4D is not processed correctly.
+* Supported formats: 
 
-Tested with 4D v17.5 
-
-* `440,682,781` original
-* `2,667` items
-* `107,242,571` bytes .7z
-* `438,374,385` restored (archive utility, double click Finder) 
-* fault: `Chromium Embedded Framework.framework` is missing
-
-It contains dot-dot
-
-```
-Components/WebViewerCEF.bundle/Contents/Frameworks/Chromium Embedded Framework.framework
-=>/Applications/4D v17.5/4D.app/Contents/Frameworks/Chromium Embedded Framework.framework
-=>../Native Components/WebViewerCEF.bundle/Contents/Frameworks/Chromium Embedded Framework.framework
-```
+  * .7z
+  * .zip = .jar
+  * .cpio
+  * .iso
+  * .a = .ar
+  * .tar
+  * .tgz = .tar.gz
+  * .tar.bz2
+  * .tar.xz
