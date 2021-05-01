@@ -25,6 +25,12 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 
 [libarchive](https://www.libarchive.org)
 
+* Definition of hidden item on Mac:
+ 
+  * `NSURL` `-getResourceValue:forKey:NSURLIsHiddenKeyerror:`
+  * `path.at(0) == '.')`
+  * `path.find("/.") != std::string::npos)`
+
 #### Special Considerations
 
 The symbolic link (`Chromium Embedded Framework.framework`) inside 4D is not processed correctly.
