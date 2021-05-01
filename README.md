@@ -48,7 +48,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.bz2
   * .tar.xz
 
- #### Test
+ #### Archive Test
  
  #### Tested wth 4D.app (v17.5)
 * 2,667 files 
