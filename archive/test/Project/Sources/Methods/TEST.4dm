@@ -1,7 +1,7 @@
 //%attributes = {}
 $version:=archive version ()
 
-SET TEXT TO PASTEBOARD:C523(JSON Stringify:C1217($version;*))
+  //SET TEXT TO PASTEBOARD(JSON Stringify($version;*))
 
 /*
 

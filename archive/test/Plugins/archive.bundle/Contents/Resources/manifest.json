@@ -9,7 +9,7 @@
         },
         {
             "theme": "archive",
-            "syntax": "archive write(&T;&T;&J):J",
+            "syntax": "archive write(&C;&T;&J):J",
             "threadSafe": true
         },
         {

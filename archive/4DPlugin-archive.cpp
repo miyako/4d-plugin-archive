@@ -39,7 +39,279 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params) {
 	}
 }
 
-void archive_version(PA_PluginParameters params) {
+#pragma mark -
+
+static void collection_push(PA_CollectionRef c, const wchar_t *value) {
+    
+    if(c) {
+        if(value) {
+            CUTF16String u16 = CUTF16String((const PA_Unichar *)value);
+            PA_Variable v = PA_CreateVariable(eVK_Unistring);
+            PA_Unistring ustr = PA_CreateUnistring((PA_Unichar *)u16.c_str());
+            PA_SetStringVariable(&v, &ustr);
+            PA_SetCollectionElement(c, PA_GetCollectionLength(c), v);
+            PA_ClearVariable(&v);
+        }
+    }
+}
+
+static void collection_push(PA_CollectionRef c, const char *value) {
+    
+    if(c) {
+        if(value) {
+            CUTF8String u8 = CUTF8String((const uint8_t *)value);
+            CUTF16String u16;
+    #ifdef _WIN32
+            int len = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)u8.c_str(), u8.length(), NULL, 0);
+            
+            if(len){
+                std::vector<uint8_t> buf((len + 1) * sizeof(PA_Unichar));
+                if(MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)u8.c_str(), u8.length(), (LPWSTR)&buf[0], len)){
+                    u16 = CUTF16String((const PA_Unichar *)&buf[0]);
+                }
+            }else{
+                u16 = CUTF16String((const PA_Unichar *)L"");
+            }
+    #else
+            CFStringRef str = CFStringCreateWithBytes(kCFAllocatorDefault, u8.c_str(), u8.length(), kCFStringEncodingUTF8, true);
+            if(str){
+                CFIndex len = CFStringGetLength(str);
+                std::vector<uint8_t> buf((len+1) * sizeof(PA_Unichar));
+                CFStringGetCharacters(str, CFRangeMake(0, len), (UniChar *)&buf[0]);
+                u16 = CUTF16String((const PA_Unichar *)&buf[0]);
+                CFRelease(str);
+            }
+    #endif
+            PA_Variable v = PA_CreateVariable(eVK_Unistring);
+            PA_Unistring ustr = PA_CreateUnistring((PA_Unichar *)u16.c_str());
+            PA_SetStringVariable(&v, &ustr);
+            PA_SetCollectionElement(c, PA_GetCollectionLength(c), v);
+            PA_ClearVariable(&v);
+        }
+    }
+}
+
+#pragma mark -
+
+static bool check_warning(bool processing, int r, struct archive *a, PA_CollectionRef warnings) {
+        
+    if (r < ARCHIVE_OK) {
+        switch (r) {
+            case ARCHIVE_RETRY:
+                break;
+            case ARCHIVE_WARN:
+                collection_push(warnings, archive_error_string(a));
+                break;
+            case ARCHIVE_FAILED:
+            case ARCHIVE_FATAL:
+                processing = false;
+                break;
+            default:
+                break;
+        }
+    }
+    
+    return processing;
+}
+
+static bool check_eof(bool processing, int r, struct archive *a, PA_CollectionRef warnings, PA_ObjectRef status) {
+        
+    if (r == ARCHIVE_EOF) {
+        ob_set_b(status, L"success", true);
+        processing = false;
+    }
+    
+    if(processing) {
+        processing = check_warning(processing, r, a, warnings);
+    }
+    
+    if(!processing) {
+        ob_set_s(status, L"error", archive_error_string(a));
+    }
+
+    return processing;
+}
+
+static int copy_data(struct archive *ar, struct archive *aw) {
+    
+  int r = ARCHIVE_OK;
+  const void *buf;
+  size_t size;
+  la_int64_t offset;
+
+  for (;;) {
+    
+    r = archive_read_data_block(ar, &buf, &size, &offset);
+      
+    if (r == ARCHIVE_EOF)
+      return (ARCHIVE_OK);
+      
+    if (r < ARCHIVE_OK)
+      return r;
+      
+    r = (int)archive_write_data_block(aw, buf, size, offset);
+    if (r < ARCHIVE_OK) {
+      return r;
+    }
+  }
+}
+
+static FILE *ufopen(CUTF8String& path, const char *mode) {
+    
+    const char *filename = (const char *)path.c_str();
+    
+#ifdef _WIN32
+    wchar_t    buf[_MAX_PATH];
+    wchar_t    _wfmode[99];    //should be enough
+    if(MultiByteToWideChar(CP_UTF8, 0, mode, -1, (LPWSTR)_wfmode, 99))
+    {
+        if(MultiByteToWideChar(CP_UTF8, 0, filename, -1, (LPWSTR)buf, _MAX_PATH))
+        {
+            return _wfopen((const wchar_t *)buf, (const wchar_t *)_wfmode);
+        }
+    }
+    return  fopen(filename, mode);
+#else
+    return fopen(filename, mode);
+#endif
+}
+
+static FILE *open_path(int r,
+                       struct archive *a,
+                       struct archive_entry *f,
+                       uastring& relative_path,
+                       uastring& absolute_path) {
+    
+    /*
+     
+     libarchive api:
+     
+     archive_entry_set_pathname (file, folder, symlink)
+     
+     archive_entry_set_filetype(file, folder, symlink)
+     archive_entry_set_perm(file, folder, symlink)
+     
+     archive_entry_set_symlink_type(symlink)
+     archive_entry_set_symlink_utf8(symlink)
+     
+     archive_entry_set_size(file)
+    
+     */
+    
+    FILE *fd = NULL;
+    
+#if VERSIONMAC
+    archive_entry_set_pathname  (f, relative_path.c_str());
+    fd = fopen  (absolute_path.c_str(),  "rb");
+#else
+    archive_entry_set_pathname_w(f, relative_path.c_str());
+    fd = _wfopen(absolute_path.c_str(), L"rb");
+#endif
+    
+    bool isFile = set_file_info(f, absolute_path);
+    
+    if(fd) {
+        if(isFile) {
+            set_file_size(f, fd);
+        }
+        //symlink does not open
+    }
+
+    return fd;
+}
+
+static void get_path(C_TEXT& t, uastring& path) {
+    
+#if VERSIONMAC
+    CUTF8String p;
+    t.copyPath(&p);
+    path = uastring((const char *)p.c_str());
+#else
+    CUTF16String p;
+    t.copyUTF16String(&p);
+    path = uastring((const wchar_t *)p.c_str());
+#endif
+}
+
+static void get_folder_path(C_TEXT& t, uastring& path) {
+    
+    get_path(t, path);
+    
+#if VERSIONMAC
+    //remove last path separator
+    if(path.at(path.size() - 1) == '/')
+        path = path.substr(0, path.size() - 1);
+    
+    //append folder separator
+    path += (const char *)"/";
+
+#else
+    //remove last path separator
+    if(path.at(path.size() - 1) == L'\\')
+        path = path.substr(0, path.size() - 1);
+    
+    //append folder separator
+    path += (const wchar_t *)L"\\";
+    
+    //forward slash
+    for (unsigned int i = 0; i < path.size(); ++i)
+        if (path.at(i) == '\\')
+            path.at(i) = L'/';
+    
+#endif
+}
+
+static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path) {
+        
+    get_path(t, path);
+    
+#if VERSIONMAC
+    r = archive_read_open_filename  (a, (const char *)   path.c_str(), LIBARCHIVE_BUFFER_SIZE);
+#else
+    r = archive_read_open_filename_w(a, (const wchar_t *)path.c_str(), LIBARCHIVE_BUFFER_SIZE);
+#endif
+    
+    return r;
+}
+
+static int open_archive_dst(int r, struct archive *a, C_TEXT& t, uastring& path) {
+    
+    get_path(t, path);
+    
+#if VERSIONMAC
+    r = archive_write_open_filename  (a, path.c_str());
+#else
+    r = archive_write_open_filename_w(a, path.c_str());
+#endif
+    
+    return r;
+}
+
+static int set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath) {
+  
+#if VERSIONMAC
+    const char    *filename = archive_entry_pathname_utf8(f);
+#else
+    const wchar_t *filename = archive_entry_pathname_w   (f);
+#endif
+    
+    collection_push(paths, filename);
+        
+#if VERSIONMAC
+    uastring fullpath = dstPath + (const char *)   filename;
+    archive_entry_set_pathname_utf8(f, fullpath.c_str());
+#else
+    uastring fullpath = dstPath + (const wchar_t *)filename;
+    archive_entry_copy_pathname_w  (f, fullpath.c_str());
+#endif
+    
+    archive_entry_set_pathname_utf8(f, fullpath.c_str());
+    
+}
+
+#pragma mark -
+
+static void archive_version(PA_PluginParameters params) {
     
     PA_ObjectRef o = PA_CreateObject();
     
@@ -53,59 +325,849 @@ void archive_version(PA_PluginParameters params) {
     PA_ReturnObject(params, o);
 }
 
+static void archive_read(PA_PluginParameters params) {
+
+    PackagePtr pParams = (PackagePtr)params->fParameters;
+    
+    C_TEXT src;
+    src.fromParamAtIndex(pParams, 1);
+    
+    C_TEXT dst;
+    dst.fromParamAtIndex(pParams, 2);
+    
+    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
+    PA_ObjectRef status  = PA_CreateObject();
+    
+    ob_set_b(status, L"success", false);
+
+    PA_CollectionRef warnings = PA_CreateCollection();
+    PA_CollectionRef paths = PA_CreateCollection();
+    
+    int flags = set_flags(options);
+    
+    //--end of preparation
+
+    uastring dstPath;
+    uastring srcPath;
+    
+    struct archive *a = archive_read_new();
+    archive_read_support_format_all(a);
+    archive_read_support_filter_all(a);
+    
+    struct archive *e = archive_write_disk_new();
+    archive_write_disk_set_options(e, flags);
+    archive_write_disk_set_standard_lookup(e);
+    
+    int r = ARCHIVE_OK;
+    
+    get_folder_path(dst, dstPath);
+    r = open_archive_src(r, a, src, srcPath);
+      
+    struct archive_entry *f = NULL;
+    
+    if (ARCHIVE_OK == r) {
+
+        bool processing = true;
+        
+        while (processing) {
+            
+            r = archive_read_next_header(a, &f);
+            
+            processing = check_eof(processing, r, a, warnings, status);
+
+            if(processing) {
+
+                set_pathname(f, paths, dstPath);
+
+                r = archive_write_header(e, f);
+                
+                if (r < ARCHIVE_OK) {
+                    processing = check_warning(processing, r, a, warnings);
+                    if(!processing) {
+                        ob_set_s(status, L"error", archive_error_string(a));
+                    }
+                }else{
+                    
+                    if (archive_entry_size(f) > 0) {
+                        r = copy_data(a, e);
+                        processing = check_warning(processing, r, a, warnings);
+                        if(!processing) {
+                            ob_set_s(status, L"error", archive_error_string(a));
+                        }
+                    }
+                    
+                    r = archive_write_finish_entry(e);
+                    processing = check_warning(processing, r, a, warnings);
+                    if(!processing) {
+                        ob_set_s(status, L"error", archive_error_string(a));
+                    }
+                }
+            }
+        }
+        
+        if(PA_GetCollectionLength(warnings) != 0) {
+            ob_set_c(status, L"warnings", warnings);
+        }else{
+            PA_DisposeCollection(warnings);
+        }
+                
+        ob_set_c(status, L"paths", paths);
+    }
+    
+    archive_read_close(a);
+    archive_read_free(a);
+    
+    archive_write_close(e);
+    archive_write_free(e);
+    
+    PA_ReturnObject(params, status);
+}
+
 #pragma mark -
 
-typedef enum {
+static int set_flags(PA_ObjectRef options) {
     
-    archive_format_CPIO_P = ARCHIVE_FORMAT_CPIO_POSIX,
-    archive_format_CPIO_L = ARCHIVE_FORMAT_CPIO_BIN_LE,
-    archive_format_CPIO_B = ARCHIVE_FORMAT_CPIO_BIN_BE,
-    archive_format_CPIO_N = ARCHIVE_FORMAT_CPIO_SVR4_NOCRC,
-    archive_format_CPIO_C = ARCHIVE_FORMAT_CPIO_SVR4_CRC,
-    archive_format_CPIO_A = ARCHIVE_FORMAT_CPIO_AFIO_LARGE,
+    int flags = 0L;
     
-    archive_format_SHAR_B = ARCHIVE_FORMAT_SHAR_BASE,
-    archive_format_SHAR_D = ARCHIVE_FORMAT_SHAR_DUMP,
+    flags |= ARCHIVE_EXTRACT_MAC_METADATA;//restore Mac extended metadata
+    flags |= ARCHIVE_EXTRACT_OWNER;//try to set owner/group
+    flags |= ARCHIVE_EXTRACT_TIME;//restore mtime/atime
+    flags |= ARCHIVE_EXTRACT_PERM;//restore SUID/SGID/SVTX bits
+    flags |= ARCHIVE_EXTRACT_ACL;//restore ACLs
+    flags |= ARCHIVE_EXTRACT_FFLAGS;//restore fflags
+    flags |= ARCHIVE_EXTRACT_XATTR;//restore xattrs
+    flags |= ARCHIVE_EXTRACT_NO_OVERWRITE;//do not replace existing files
+    flags |= ARCHIVE_EXTRACT_NO_OVERWRITE_NEWER;//do not overwrite files, even if one on disk is newer
+    flags |= ARCHIVE_EXTRACT_SECURE_SYMLINKS;//try to guard against extracts redirected by symlinks
     
-    archive_format_TAR_U  = ARCHIVE_FORMAT_TAR_USTAR,
-    archive_format_TAR_I  = ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE,
-    archive_format_TAR_R  = ARCHIVE_FORMAT_TAR_PAX_RESTRICTED,
-    archive_format_TAR_G  = ARCHIVE_FORMAT_TAR_GNUTAR,
-    
-    archive_format_ISO    = ARCHIVE_FORMAT_ISO9660_ROCKRIDGE,
-    archive_format_ZIP    = ARCHIVE_FORMAT_ZIP,
-    archive_format_EMPTY  = ARCHIVE_FORMAT_EMPTY,
-    
-    archive_format_AR_G   = ARCHIVE_FORMAT_AR_GNU,
-    archive_format_AR_B   = ARCHIVE_FORMAT_AR_BSD,
-    
-    archive_format_MTREE  = ARCHIVE_FORMAT_MTREE,
-    archive_format_RAW    = ARCHIVE_FORMAT_RAW,
-    archive_format_XAR    = ARCHIVE_FORMAT_XAR,
-    archive_format_LHA    = ARCHIVE_FORMAT_LHA,
-    archive_format_CAB    = ARCHIVE_FORMAT_CAB,
-    archive_format_7ZIP   = ARCHIVE_FORMAT_7ZIP,
-    archive_format_WARC   = ARCHIVE_FORMAT_WARC,
-    archive_format_RAR    = ARCHIVE_FORMAT_RAR,
-    archive_format_RAR5   = ARCHIVE_FORMAT_RAR_V5
-    
-}archive_format_t;
+    if(options) {
+        
+        //these flags can be explicitly SET
+        
+        if(ob_is_defined(options, L"noDotDot")) {
+            if(ob_get_b(options, L"noDotDot")) {
+                flags |= ARCHIVE_EXTRACT_SECURE_NODOTDOT;//reject entries with '..' as path elements
+            }
+        }
+        
+        if(ob_is_defined(options, L"noAbsolutePaths")) {
+            if(ob_get_b(options, L"noAbsolutePaths")) {
+                flags |= ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS;//reject entries with absolute paths
+            }
+        }
 
-void archive_read(PA_PluginParameters params) {
+        if(ob_is_defined(options, L"noAutoDir")) {
+            if(ob_get_b(options, L"noAutoDir")) {
+                flags |= ARCHIVE_EXTRACT_NO_AUTODIR;//do not create parent directories as needed
+            }
+        }
+        
+        if(ob_is_defined(options, L"atomic")) {
+            if(ob_get_b(options, L"atomic")) {
+                flags |= ARCHIVE_EXTRACT_SAFE_WRITES;//extract atomically (using rename)
+            }
+        }
+        
+        if(ob_is_defined(options, L"noHFSCompression")) {
+            if(ob_get_b(options, L"noHFSCompression")) {
+                flags |= ARCHIVE_EXTRACT_NO_HFS_COMPRESSION;//do not use HFS+ compression if it was compressed
+            }
+        }
+        
+        if(ob_is_defined(options, L"forceHFSCompression")) {
+            if(ob_get_b(options, L"forceHFSCompression")) {
+                flags |= ARCHIVE_EXTRACT_HFS_COMPRESSION_FORCED;//use HFS+ compression if it was not compressed
+            }
+        }
+                
+        if(ob_is_defined(options, L"clearNoChangeFlags")) {
+            if(ob_get_b(options, L"clearNoChangeFlags")) {
+                flags |= ARCHIVE_EXTRACT_CLEAR_NOCHANGE_FFLAGS;//clear no-change flags when unlinking object
+            }
+        }
+        
+        if(ob_is_defined(options, L"unlink")) {
+            if(ob_get_b(options, L"unlink")) {
+                flags |= ARCHIVE_EXTRACT_UNLINK;//always unlink
+            }
+        }
+        
+        if(ob_is_defined(options, L"sparse")) {
+            if(ob_get_b(options, L"sparse")) {
+                flags |= ARCHIVE_EXTRACT_SPARSE;//detect blocks of 0 and write holes instead
+            }
+        }
 
-    int r;
-    //ssize_t size;
+        //these flags can be explicitly UNSET
+        
+        if(ob_is_defined(options, L"metadata")) {
+            if(!ob_get_b(options, L"metadata")) {
+                flags &= ~ARCHIVE_EXTRACT_MAC_METADATA;
+            }
+        }
+        
+        if(ob_is_defined(options, L"owner")) {
+            if(!ob_get_b(options, L"owner")) {
+                flags &= ~ARCHIVE_EXTRACT_OWNER;
+            }
+        }
+        
+        if(ob_is_defined(options, L"time")) {
+            if(!ob_get_b(options, L"time")) {
+                flags &= ~ARCHIVE_EXTRACT_TIME;
+            }
+        }
+        
+        if(ob_is_defined(options, L"perm")) {
+            if(!ob_get_b(options, L"perm")) {
+                flags &= ~ARCHIVE_EXTRACT_PERM;
+            }
+        }
 
-    struct archive *a = archive_read_new();
-    
-    archive_read_support_format_all(a); // raw not enabled
-    archive_read_support_format_raw(a); //empty not enabled
-    archive_read_support_format_empty(a);
-    
-    archive_read_free(a);
+        if(ob_is_defined(options, L"ACL")) {
+            if(!ob_get_b(options, L"ACL")) {
+                flags &= ~ARCHIVE_EXTRACT_ACL;
+            }
+        }
+        
+        if(ob_is_defined(options, L"fflags")) {
+            if(!ob_get_b(options, L"fflags")) {
+                flags &= ~ARCHIVE_EXTRACT_FFLAGS;
+            }
+        }
+        
+        if(ob_is_defined(options, L"xattr")) {
+            if(!ob_get_b(options, L"xattr")) {
+                flags &= ~ARCHIVE_EXTRACT_XATTR;
+            }
+        }
+        
+        if(ob_is_defined(options, L"noOverWrite")) {
+            if(!ob_get_b(options, L"noOverWrite")) {
+                flags &= ~ARCHIVE_EXTRACT_NO_OVERWRITE;
+            }
+        }
+        
+        if(ob_is_defined(options, L"noOverWriteNewer")) {
+            if(!ob_get_b(options, L"noOverWriteNewer")) {
+                flags &= ~ARCHIVE_EXTRACT_NO_OVERWRITE_NEWER;
+            }
+        }
+        
+        if(ob_is_defined(options, L"secureSymlinks")) {
+            if(!ob_get_b(options, L"secureSymlinks")) {
+                flags &= ~ARCHIVE_EXTRACT_SECURE_SYMLINKS;
+            }
+        }
+                
+    }
+   
+    return flags;
 }
 
-void archive_write(PA_PluginParameters params) {
 
+#pragma mark -
+
+#if VERSIONMAC
+static void get_subpaths(
+                         uastring& spath,
+                         uastrings *relative_paths,
+                         uastrings *absolute_paths,
+                         bool skipHidden,
+                         bool keepParent) {
+    
+    NSFileManager *fm = [[NSFileManager alloc]init];
+    NSString *path = (NSString *)CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault, spath.c_str());
+    
+    if(path) {
+        
+        BOOL isDirectory = YES;
+
+        if([fm fileExistsAtPath:path isDirectory:&isDirectory]) {
+            
+            if(isDirectory) {
+                
+                NSString *folderName = [[path lastPathComponent]stringByAppendingString:@"/"];
+                
+                NSURL *baseUrl = [NSURL fileURLWithPath:path isDirectory:YES];
+                NSString *basePath = [baseUrl path];
+                if(![[basePath substringFromIndex:[basePath length]]isEqualToString:@"/"]) {
+                    basePath = [basePath stringByAppendingString:@"/"];
+                }
+                
+                NSArray *paths = (NSMutableArray *)[fm subpathsOfDirectoryAtPath:path error:NULL];
+                
+                if(keepParent) {
+                    relative_paths->push_back([folderName UTF8String]);
+                    absolute_paths->push_back([basePath UTF8String]);
+                }
+                
+                //a folder with contents
+                
+                auto startTime = std::chrono::high_resolution_clock::now();
+                
+                for(NSUInteger i = 0; i < [paths count]; i++){
+                    
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+                    
+                    if(elapsedTime > 100)
+                    {
+                        startTime = now;
+                        PA_YieldAbsolute();
+                    }
+                    
+                    NSString *itemPath = [paths objectAtIndex:i];
+                    NSString *itemFullPath = [path stringByAppendingPathComponent:itemPath];
+                    
+                    //this method does not traverse a terminal symlink
+                    NSDictionary *attributes = [fm attributesOfItemAtPath:itemFullPath error:nil];
+                    if(attributes) {
+                        bool is_hidden = false;
+                        NSURL *u = [[NSURL alloc]initFileURLWithPath:itemFullPath];
+                        if(u) {
+                            NSNumber *isHidden;
+                            if([u getResourceValue:&isHidden forKey:NSURLIsHiddenKey error:nil]) {
+                                is_hidden = [isHidden boolValue];
+                            }
+                            [u release];
+                        }
+                        if([[attributes valueForKey:NSFileType]isEqualToString:NSFileTypeSymbolicLink]) {
+                            
+                        }else{
+                            //this returns false for symbolic link
+                            if([fm fileExistsAtPath:itemFullPath isDirectory:&isDirectory]){
+                                if(isDirectory)
+                                    itemPath = [itemPath stringByAppendingString:@"/"];
+                            }
+                        }
+                        std::string absolute_path = [itemFullPath UTF8String];
+                        std::string relative_path = [[folderName stringByAppendingString:itemPath]UTF8String];
+                        
+                        is_hidden |= (relative_path.at(0) == '.');/* invisible folder for mac */
+                        is_hidden |= (relative_path.find("/.") != std::string::npos);/* invisible folder in path */
+                        
+                        if(!(skipHidden && is_hidden)) {
+                            
+                            absolute_paths->push_back(absolute_path);
+                            
+                            if(keepParent){
+                                relative_paths->push_back(relative_path);
+                            }else{
+                                relative_paths->push_back([itemPath UTF8String]);
+                            }
+                        }
+                    }
+                }
+                
+            }else{
+                //a file (over-ride ignore_dot, this is top level)
+                relative_paths->push_back(std::string([[path lastPathComponent]UTF8String]));
+                absolute_paths->push_back(spath);
+            }
+            
+        }
+
+        [path release];
+    }
+        
+    [fm release];
+}
+#endif
+
+#if VERSIONWIN
+static void get_subpaths(
+                         uastring& spath,
+                         uastrings *relative_paths,
+                         uastrings *absolute_paths,
+                         uastring& folder_name,
+                         bool skipHidden,
+                         bool keepParent,
+                         size_t absolutePathOffset = 0) {
+    
+    WIN32_FIND_DATA find;
+    
+    HANDLE h = FindFirstFile(path.c_str(), &find);
+    
+    uastring absolute_path;
+    uastring relative_path;
+    
+    if(h != INVALID_HANDLE_VALUE){
+        
+        auto startTime = std::chrono::high_resolution_clock::now();
+        
+        do {
+
+            auto now = std::chrono::high_resolution_clock::now();
+            auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+            
+            if(elapsedTime > 100)
+            {
+                startTime = now;
+                PA_YieldAbsolute();
+            }
+            
+            std::wstring sub_path = find.cFileName;
+            
+            /* ignore these meta */
+            if((!wcscmp(sub_path.c_str(), L"..")) || (!wcscmp(sub_path.c_str(), L".")))
+                continue;
+            
+            if((find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == FILE_ATTRIBUTE_DIRECTORY)
+            {
+                /* is a folder */
+                if(!absolutePathOffset)
+                {
+                    /* is top level */
+                    /* use this length to convert absolute path to relative */
+                    absolutePathOffset = path.size() - 1;
+                    
+                    wcs_to_utf8(sub_path + L"/", folder_name);
+                    
+                    /* if flag specified, ignore (special option for top level) */
+                    if(!without_enclosing_folder)
+                    {
+                        absolute_paths->push_back(path);
+                        relative_paths->push_back(folder_name);
+                    }
+                    
+                    /* recursive call with wildcard */
+                    get_subpaths(path + L"\\*",
+                                 absolute_paths,
+                                 relative_paths,
+                                 folder_name,
+                                 skipHidden,
+                                 keepParent,
+                                 absolutePathOffset);
+                    
+                }else{
+                    /* not top level */
+                    /* trim the wildcard */
+                    absolute_path = path.substr(0, path.size() - 1) + sub_path;
+                    
+                    wstring base_path = absolute_path.substr(absolutePathOffset + 2);
+                    /* base_path += sub_path;*/
+                    /* because this is a folder path */
+                    base_path += L"\\";
+                    escape_path(base_path);
+                    wcs_to_utf8(base_path, relative_path);
+                    relative_path = folder_name + relative_path;
+                    
+                    bool is_hidden = (GetFileAttributes(absolute_path.c_str()) & FILE_ATTRIBUTE_HIDDEN) == FILE_ATTRIBUTE_HIDDEN;
+                    is_hidden |= (relative_path.at(0) == '.');/* invisible folder for mac */
+                    is_hidden |= (relative_path.find("/.") != string::npos);/* invisible folder in path */
+                    
+                    if(!(!skipHidden & is_hidden))
+                    {
+                        absolute_paths->push_back(absolute_path);
+                        
+                        if(!without_enclosing_folder)
+                        {
+                            relative_paths->push_back(relative_path);
+                        }else{
+                            relative_paths->push_back(relative_path.substr(folder_name.length()));
+                        }
+                        
+                        get_subpaths(absolute_path /* + sub_path */ + L"\\*",
+                                     absolute_paths,
+                                     relative_paths,
+                                     folder_name,
+                                     skipHidden,
+                                     keepParent,
+                                     absolutePathOffset);
+                        
+                    }
+                    
+                }
+                
+            }else{
+                /* is file */
+                if(!absolutePathOffset)
+                {
+                    /* top level */
+                    absolute_path = path;// + sub_path;
+                    
+                    escape_path(sub_path);
+                    wcs_to_utf8(sub_path, relative_path);
+                    
+                    absolute_paths->push_back(absolute_path);
+                    relative_paths->push_back(relative_path);
+                    
+                }else{
+                    /* not top level */
+                    wstring base_path = path.substr(0, path.size() - 1);
+                    absolute_path = base_path + sub_path;
+                    
+                    sub_path = base_path.substr(absolutePathOffset + 2) + sub_path;
+                    
+                    escape_path(sub_path);
+                    wcs_to_utf8(sub_path, relative_path);
+                    relative_path = folder_name + relative_path;
+                    
+                    bool is_hidden = (GetFileAttributes(absolute_path.c_str()) & FILE_ATTRIBUTE_HIDDEN) == FILE_ATTRIBUTE_HIDDEN;
+                    is_hidden |= (relative_path.at(0) == '.');/* invisible folder for mac */
+                    is_hidden |= (relative_path.find("/.") != string::npos);/* invisible folder in path */
+                    
+                    if(!(!skipHidden & is_hidden))
+                    {
+                        absolute_paths->push_back(absolute_path);
+                        
+                        if(!without_enclosing_folder)
+                        {
+                            relative_paths->push_back(relative_path);
+                        }else{
+                            relative_paths->push_back(relative_path.substr(folder_name.length()));
+                        }
+                    }
+                    
+                }
+                
+            }
+            
+        } while (FindNextFile(h, &find));
+        /*
+         if(!absolute_paths->size() && absolutePathOffset){
+         wstring base_path = path.substr(0, path.size() - 1);
+         relative_paths->push_back(folder_name);
+         absolute_paths->push_back(base_path);
+         }
+         */
+        FindClose(h);
+        
+    }
 }
 
+static void get_subpaths(
+                         uastring& spath,
+                         uastrings *relative_paths,
+                         uastrings *absolute_paths,
+                         bool skipHidden,
+                         bool keepParent) {
+ 
+    uastring folder_name;
+    
+    get_subpaths(spath,
+                 absolute_paths,
+                 relative_paths,
+                 folder_name,
+                 skipHidden,
+                 keepParent);
+}
+#endif
+
+static void get_subpaths(PA_CollectionRef src,
+                         uastrings *relative_paths,
+                         uastrings *absolute_paths,
+                         bool skipHidden,
+                         bool keepParent) {
+    
+    if(src) {
+        
+        for(PA_long32 i = 0; i < PA_GetCollectionLength(src); ++i) {
+            
+            PA_Variable v = PA_GetCollectionElement(src, i);
+            if(PA_GetVariableKind(v) == eVK_Unistring) {
+                PA_Unistring u = PA_GetStringVariable(v);
+#if VERSIONMAC
+                std::string path;
+                CFStringRef str = CFStringCreateWithCharacters(kCFAllocatorDefault, (const UniChar *)u.fString, u.fLength);
+                if(str) {
+                    
+                    NSURL *u = (NSURL *)CFURLCreateWithFileSystemPath(kCFAllocatorDefault, str, kCFURLHFSPathStyle, false);
+                    if(u){
+                        NSString *_path = (NSString *)CFURLCopyFileSystemPath((CFURLRef)u, kCFURLPOSIXPathStyle);
+                        [u release];
+                        if(_path) {
+                            path = [_path UTF8String];
+                            [_path release];
+                        }
+                    }
+                    CFRelease(str);
+                }
+#else
+                std::wstring path;
+                if((u.fLength) && (u.fString)) {
+                    path = std::wstring((const wchar_t *)PA_GetUnistring(&u));
+                }
+#endif
+                get_subpaths(path,
+                             relative_paths,
+                             absolute_paths,
+                             skipHidden,
+                             keepParent);
+            }
+        }
+    }
+}
+
+#pragma mark -
+
+#if VERSIONMAC
+static bool set_file_symlink(struct archive_entry *f, uastring& absolute_path) {
+    
+    bool isFile = true;
+    
+    archive_entry_set_filetype(f, AE_IFLNK);
+    archive_entry_set_symlink_type(f, AE_SYMLINK_TYPE_UNDEFINED);
+    
+    NSFileManager *fm = [[NSFileManager alloc]init];
+    
+    NSString *path = (NSString *)CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault, absolute_path.c_str());
+    if(path) {
+        
+        //this is the full path
+        NSString *symlinkPath = [path stringByResolvingSymlinksInPath];
+        if(symlinkPath) {
+            NSDictionary *symlinkAttributes = [fm attributesOfItemAtPath:symlinkPath error:nil];
+            if(symlinkAttributes) {
+                NSString *symlinkFileType = [symlinkAttributes valueForKey:NSFileType];
+                if(symlinkFileType) {
+                    if([symlinkFileType isEqualToString:NSFileTypeDirectory]) {
+                        archive_entry_set_symlink_type(f, AE_SYMLINK_TYPE_DIRECTORY);
+                        isFile = false;
+                    }else {
+                        archive_entry_set_symlink_type(f, AE_SYMLINK_TYPE_FILE);
+                    }
+                }
+            }
+            
+            //this is the relative path
+            symlinkPath = [fm destinationOfSymbolicLinkAtPath:path error:nil];
+            archive_entry_set_symlink_utf8(f, [symlinkPath UTF8String]);
+        }
+        [path release];
+    }
+    
+    [fm release];
+    
+    return isFile;
+}
+#endif
+
+static bool set_file_info(struct archive_entry *f, uastring& absolute_path) {
+    
+    bool isFile = true;
+    
+#if VERSIONMAC
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *path = (NSString *)CFStringCreateWithFileSystemRepresentation(kCFAllocatorDefault, absolute_path.c_str());
+    if(path) {
+                
+        NSDictionary *attributes = [fileManager attributesOfItemAtPath:path error:nil];
+        if(attributes) {
+            
+            short perm = [[attributes valueForKey:NSFilePosixPermissions]shortValue];
+            archive_entry_set_perm(f, perm);
+
+            NSString *fileType = [attributes valueForKey:NSFileType];
+            if([fileType isEqualToString:NSFileTypeRegular]) {
+                archive_entry_set_filetype(f, AE_IFREG);
+            }
+            else if([fileType isEqualToString:NSFileTypeSymbolicLink]) {
+                isFile = set_file_symlink(f, absolute_path);
+            }
+            else if([fileType isEqualToString:NSFileTypeDirectory]) {
+                archive_entry_set_filetype(f, AE_IFDIR);
+                isFile = false;
+            }
+            else if([fileType isEqualToString:NSFileTypeCharacterSpecial]) {
+                archive_entry_set_filetype(f, AE_IFCHR);
+                isFile = false;
+            }
+            else if([fileType isEqualToString:NSFileTypeBlockSpecial]) {
+                archive_entry_set_filetype(f, AE_IFBLK);
+                isFile = false;
+            }
+            else if([fileType isEqualToString:NSFileTypeSocket]) {
+                archive_entry_set_filetype(f, AE_IFSOCK);
+                isFile = false;
+            }else{
+                archive_entry_set_filetype(f, AE_IFREG);
+            }
+        }else{
+            archive_entry_set_filetype(f, AE_IFREG);
+            archive_entry_set_perm(f, 644);
+        }
+        [path release];
+    }else{
+        archive_entry_set_filetype(f, AE_IFREG);
+        archive_entry_set_perm(f, 644);
+    }
+#else
+    DWORD attributes = GetFileAttributesW(absolute_path.c_str());
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+        archive_entry_set_filetype(f, AE_IFDIR);
+        isFile = false;
+    }else{
+        archive_entry_set_filetype(f, AE_IFREG);
+    }
+    archive_entry_set_perm(f, 644);
+#endif
+    
+    return isFile;
+}
+
+static bool set_file_size(struct archive_entry *f, FILE *fd) {
+    
+    bool success = false;
+    
+    fseek(fd, 0L, SEEK_END);
+    long size = ftell(fd);
+    fseek(fd, 0L, SEEK_SET);
+    
+    if(size == -1L) {
+
+    }else{
+        archive_entry_set_size(f, size);
+        success = true;
+    }
+    
+    return success;
+}
+
+#pragma mark -
+
+static void archive_write(PA_PluginParameters params) {
+
+    PackagePtr pParams = (PackagePtr)params->fParameters;
+    
+    PA_CollectionRef src = PA_GetCollectionParameter(params, 1);
+    
+    C_TEXT dst;
+    dst.fromParamAtIndex(pParams, 2);
+    
+    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
+    PA_ObjectRef status  = PA_CreateObject();
+    
+    ob_set_b(status, L"success", false);
+    
+    bool skipHidden = false;
+    bool keepParent = false;
+    
+    if(options) {
+        
+        //these flags can be explicitly SET
+
+        if(ob_is_defined(options, L"skipHidden")) {
+            skipHidden = ob_get_b(options, L"skipHidden");
+        }
+        
+        if(ob_is_defined(options, L"keepParent")) {
+            keepParent = ob_get_b(options, L"keepParent");
+        }
+        
+    }
+    
+    PA_CollectionRef warnings = PA_CreateCollection();
+    PA_CollectionRef paths = PA_CreateCollection();
+    
+    uastrings relative_paths;
+    uastrings absolute_paths;
+    
+    get_subpaths(src,
+                 &relative_paths,
+                 &absolute_paths,
+                 skipHidden,
+                 keepParent);
+        
+    int flags = set_flags(options);
+    
+    //--end of preparation
+ 
+    uastring dstPath;
+    
+    int r = ARCHIVE_OK;
+    
+    struct archive *a = archive_write_new();
+    archive_write_disk_set_options(a, flags);
+    
+    archive_write_set_format_7zip(a);//default=7zip
+    
+    if(options) {
+        CUTF8String ext;
+        if(ob_get_s(options, L"format", &ext)) {
+            archive_write_set_format_filter_by_ext(a, (const char *)ext.c_str());
+        }
+    }
+
+    /*
+     
+     list of formats
+     
+     .7z
+     .zip = .jar
+     .cpio
+     .iso
+     .a = .ar
+     .tar
+     .tgz = .tar.gz
+     .tar.bz2
+     .tar.xz
+    
+     */
+    
+    //TODO: run this part in a thread
+    
+    r = open_archive_dst(r, a, dst, dstPath);
+            
+    if(r == ARCHIVE_OK) {
+        
+        unsigned char buf[LIBARCHIVE_BUFFER_SIZE];
+        struct archive_entry *f = archive_entry_new();
+        
+        bool processing = true;
+        
+        size_t count = relative_paths.size();
+                
+        for (size_t i = 0; i < count; ++i) {
+            
+            uastring relative_path = relative_paths.at(i);
+            uastring absolute_path = absolute_paths.at(i);
+            
+            FILE *fd = open_path(r, a, f, relative_path, absolute_path);
+
+            r = archive_write_header(a, f);
+            
+            if(fd) {
+                if (r < ARCHIVE_OK) {
+                    processing = check_warning(processing, r, a, warnings);
+                    if(!processing) {
+                        ob_set_s(status, L"error", archive_error_string(a));
+                        break;
+                    }
+                }else{
+                    size_t len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
+                    while ( len > 0 ) {
+                        archive_write_data(a, buf, len);
+                        len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
+                    }
+                    
+                }
+                fclose(fd);
+            }
+
+            collection_push(paths, relative_path.c_str());
+
+            archive_entry_clear(f);
+        }
+        
+        if(count == PA_GetCollectionLength(paths)) {
+            ob_set_b(status, L"success", true);
+        }
+        
+        archive_entry_free(f);
+
+        if(PA_GetCollectionLength(warnings) != 0) {
+            ob_set_c(status, L"warnings", warnings);
+        }else{
+            PA_DisposeCollection(warnings);
+        }
+        
+        ob_set_c(status, L"paths", paths);
+    }
+
+    archive_write_close(a);
+    archive_write_free(a);
+    
+    PA_ReturnObject(params, status);
+}
