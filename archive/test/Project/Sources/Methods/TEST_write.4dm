@@ -4,7 +4,13 @@
 
 $files:=New collection:C1472
 
-$files.push("Macintosh HD:Applications:4D v17.5:4D.app:")
+If (Is macOS:C1572)
+	$files.push("Macintosh HD:Applications:4D v17.5:4D.app:")
+End if 
+
+If (Is Windows:C1573)
+	$files.push("C:\\Program Files\\4D\\4D v18.4\\4D")
+End if 
 
 $archive:=Folder:C1567(fk desktop folder:K87:19).file("4D.7z")
 

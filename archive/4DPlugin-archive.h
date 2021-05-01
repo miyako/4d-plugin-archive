@@ -20,13 +20,19 @@
 
 #define LIBARCHIVE_BUFFER_SIZE 10240
 
+#define DEBUG_RETURN_PATHS 0
+#define DEBUG_RETURN_WARNINGS 0
+#define DEBUG_RETURN_ERROR 0
+
 #if VERSIONMAC
 typedef std::string  uastring;
-typedef std::vector<std::string>  uastrings;
 #else
 typedef std::wstring uastring;
-typedef std::vector<std::wstring> uastrings;
 #endif
+typedef std::vector<uastring>  uastrings;
+
+typedef std::string  pathstring;
+typedef std::vector<pathstring>  pathstrings;
 
 #pragma mark -
 
@@ -49,6 +55,10 @@ static bool set_file_symlink(struct archive_entry *f, uastring& absolute_path);
 static bool set_file_info(struct archive_entry *f, uastring& absolute_path);
 static bool set_file_size(struct archive_entry *f, FILE *fd);
 
+static la_int64_t get_file_size(uastring& absolute_path);
+
+static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath);
+
 static FILE *open_path(struct archive_entry *f,
                        uastring& relative_path,
                        uastring& absolute_path);
@@ -59,32 +69,45 @@ static void get_folder_path(C_TEXT& t, uastring& path);
 static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path);
 static int open_archive_dst(int r, struct archive *a, C_TEXT& t, uastring& path);
 
+#ifdef WIN32
+#include <chrono>
+#include <Shlobj.h>
+#endif
+
+static int wcs_to_utf8(uastring& wstr, pathstring& str);
+static int utf8_to_wcs(pathstring& str, uastring& wstr);
+
+static void unescape_path(pathstring &path);
+static void unescape_path(uastring &path);
+
+static void escape_path(pathstring &path);
+static void escape_path(uastring &path);
 
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent);
 
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
-                         uastring& folder_name,
+                         pathstring& folder_name,
                          bool skipHidden,
                          bool keepParent,
-                         size_t absolutePathOffset = 0);
+                         size_t absolutePathOffset);
 
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent);
 
-static void get_subpaths(PA_CollectionRef src,
-                         uastrings *relative_paths,
+static void get_subpaths_colletion(PA_CollectionRef src,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent);

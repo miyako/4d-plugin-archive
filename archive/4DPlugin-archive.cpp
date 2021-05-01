@@ -12,6 +12,80 @@
 
 #pragma mark -
 
+#ifdef WIN32
+
+static int wcs_to_utf8(uastring& wstr, pathstring& str) {
+    
+    int error = 0;
+    
+    int len = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)wstr.c_str(), wstr.length(), NULL, 0, NULL, NULL);
+    if(len){
+        std::vector<char> buf(len + 1);
+        if(WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)wstr.c_str(), wstr.length(), (LPSTR)&buf[0], len, NULL, NULL)){
+            str = pathstring((const char *)&buf[0]);
+        }
+    }else{
+        str = pathstring((const char *)"");
+        error = -1;
+    }
+    
+    return error;
+    
+}
+
+static int utf8_to_wcs(pathstring& str, uastring& wstr) {
+    
+    int error = 0;
+    
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)str.c_str(), str.length(), NULL, 0);
+    if(len){
+        std::vector<char> buf((len + 1) * sizeof(wchar_t));
+        if(MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)str.c_str(), str.length(), (LPWSTR)&buf[0], len)){
+            wstr = uastring((const wchar_t *)&buf[0]);
+        }
+    }else{
+        wstr = uastring((const wchar_t *)L"");
+        error = -1;
+    }
+    
+    return error;
+    
+}
+
+static void unescape_path(pathstring &path) {
+    
+    uastring wpath;
+    utf8_to_wcs(path, wpath);
+    unescape_path(wpath);
+    wcs_to_utf8(wpath, path);
+}
+
+static void escape_path(pathstring &path) {
+    
+    uastring wpath;
+    utf8_to_wcs(path, wpath);
+    escape_path(wpath);
+    wcs_to_utf8(wpath, path);
+}
+
+static void unescape_path(uastring &path) {
+    
+    for (unsigned int i = 0; i < path.size(); ++i)
+        if (path.at(i) == '/')
+            path.at(i) = L'\\';
+}
+
+static void escape_path(uastring &path) {
+    
+    for (unsigned int i = 0; i < path.size(); ++i)
+        if (path.at(i) == '\\')
+            path.at(i) = L'/';
+}
+
+#endif
+
+#pragma mark -
+
 void PluginMain(PA_long32 selector, PA_PluginParameters params) {
     
 	try
@@ -100,7 +174,9 @@ static bool check_warning(bool processing, int r, struct archive *a, PA_Collecti
             case ARCHIVE_RETRY:
                 break;
             case ARCHIVE_WARN:
+#if DEBUG_RETURN_WARNINGS
                 collection_push(warnings, archive_error_string(a));
+#endif
                 break;
             case ARCHIVE_FAILED:
             case ARCHIVE_FATAL:
@@ -131,6 +207,8 @@ static bool check_eof(bool processing, int r, struct archive *a, PA_CollectionRe
 
     return processing;
 }
+ 
+#pragma mark -
 
 static int copy_data(struct archive *ar, struct archive *aw) {
     
@@ -156,30 +234,10 @@ static int copy_data(struct archive *ar, struct archive *aw) {
   }
 }
 
-static FILE *ufopen(CUTF8String& path, const char *mode) {
-    
-    const char *filename = (const char *)path.c_str();
-    
-#ifdef _WIN32
-    wchar_t    buf[_MAX_PATH];
-    wchar_t    _wfmode[99];    //should be enough
-    if(MultiByteToWideChar(CP_UTF8, 0, mode, -1, (LPWSTR)_wfmode, 99))
-    {
-        if(MultiByteToWideChar(CP_UTF8, 0, filename, -1, (LPWSTR)buf, _MAX_PATH))
-        {
-            return _wfopen((const wchar_t *)buf, (const wchar_t *)_wfmode);
-        }
-    }
-    return  fopen(filename, mode);
-#else
-    return fopen(filename, mode);
-#endif
-}
-
 static FILE *open_path(int r,
                        struct archive *a,
                        struct archive_entry *f,
-                       uastring& relative_path,
+                       pathstring& relative_path,
                        uastring& absolute_path) {
     
     /*
@@ -200,11 +258,11 @@ static FILE *open_path(int r,
     
     FILE *fd = NULL;
     
+	archive_entry_set_pathname(f, relative_path.c_str());
+
 #if VERSIONMAC
-    archive_entry_set_pathname  (f, relative_path.c_str());
     fd = fopen  (absolute_path.c_str(),  "rb");
 #else
-    archive_entry_set_pathname_w(f, relative_path.c_str());
     fd = _wfopen(absolute_path.c_str(), L"rb");
 #endif
     
@@ -219,6 +277,8 @@ static FILE *open_path(int r,
 
     return fd;
 }
+
+#pragma mark -
 
 static void get_path(C_TEXT& t, uastring& path) {
     
@@ -261,6 +321,8 @@ static void get_folder_path(C_TEXT& t, uastring& path) {
 #endif
 }
 
+#pragma mark -
+
 static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path) {
         
     get_path(t, path);
@@ -285,28 +347,6 @@ static int open_archive_dst(int r, struct archive *a, C_TEXT& t, uastring& path)
 #endif
     
     return r;
-}
-
-static int set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath) {
-  
-#if VERSIONMAC
-    const char    *filename = archive_entry_pathname_utf8(f);
-#else
-    const wchar_t *filename = archive_entry_pathname_w   (f);
-#endif
-    
-    collection_push(paths, filename);
-        
-#if VERSIONMAC
-    uastring fullpath = dstPath + (const char *)   filename;
-    archive_entry_set_pathname_utf8(f, fullpath.c_str());
-#else
-    uastring fullpath = dstPath + (const wchar_t *)filename;
-    archive_entry_copy_pathname_w  (f, fullpath.c_str());
-#endif
-    
-    archive_entry_set_pathname_utf8(f, fullpath.c_str());
-    
 }
 
 #pragma mark -
@@ -571,7 +611,7 @@ static int set_flags(PA_ObjectRef options) {
 #if VERSIONMAC
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent) {
@@ -678,19 +718,19 @@ static void get_subpaths(
 #if VERSIONWIN
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
-                         uastring& folder_name,
+                         pathstring& folder_name,
                          bool skipHidden,
                          bool keepParent,
-                         size_t absolutePathOffset = 0) {
+                         size_t absolutePathOffset) {
     
     WIN32_FIND_DATA find;
     
-    HANDLE h = FindFirstFile(path.c_str(), &find);
+    HANDLE h = FindFirstFile(spath.c_str(), &find);
     
     uastring absolute_path;
-    uastring relative_path;
+    pathstring relative_path;
     
     if(h != INVALID_HANDLE_VALUE){
         
@@ -720,21 +760,21 @@ static void get_subpaths(
                 {
                     /* is top level */
                     /* use this length to convert absolute path to relative */
-                    absolutePathOffset = path.size() - 1;
+                    absolutePathOffset = spath.size() - 1;
                     
                     wcs_to_utf8(sub_path + L"/", folder_name);
                     
                     /* if flag specified, ignore (special option for top level) */
-                    if(!without_enclosing_folder)
+                    if(keepParent)
                     {
-                        absolute_paths->push_back(path);
+                        absolute_paths->push_back(spath);
                         relative_paths->push_back(folder_name);
                     }
                     
                     /* recursive call with wildcard */
-                    get_subpaths(path + L"\\*",
-                                 absolute_paths,
+                    get_subpaths(spath + L"\\*",
                                  relative_paths,
+                                 absolute_paths,
                                  folder_name,
                                  skipHidden,
                                  keepParent,
@@ -743,9 +783,9 @@ static void get_subpaths(
                 }else{
                     /* not top level */
                     /* trim the wildcard */
-                    absolute_path = path.substr(0, path.size() - 1) + sub_path;
+                    absolute_path = spath.substr(0, spath.size() - 1) + sub_path;
                     
-                    wstring base_path = absolute_path.substr(absolutePathOffset + 2);
+                    uastring base_path = absolute_path.substr(absolutePathOffset + 2);
                     /* base_path += sub_path;*/
                     /* because this is a folder path */
                     base_path += L"\\";
@@ -755,13 +795,13 @@ static void get_subpaths(
                     
                     bool is_hidden = (GetFileAttributes(absolute_path.c_str()) & FILE_ATTRIBUTE_HIDDEN) == FILE_ATTRIBUTE_HIDDEN;
                     is_hidden |= (relative_path.at(0) == '.');/* invisible folder for mac */
-                    is_hidden |= (relative_path.find("/.") != string::npos);/* invisible folder in path */
+                    is_hidden |= (relative_path.find("/.") != pathstring::npos);/* invisible folder in path */
                     
                     if(!(!skipHidden & is_hidden))
                     {
                         absolute_paths->push_back(absolute_path);
                         
-                        if(!without_enclosing_folder)
+                        if(keepParent)
                         {
                             relative_paths->push_back(relative_path);
                         }else{
@@ -769,8 +809,8 @@ static void get_subpaths(
                         }
                         
                         get_subpaths(absolute_path /* + sub_path */ + L"\\*",
-                                     absolute_paths,
                                      relative_paths,
+                                     absolute_paths,
                                      folder_name,
                                      skipHidden,
                                      keepParent,
@@ -785,7 +825,7 @@ static void get_subpaths(
                 if(!absolutePathOffset)
                 {
                     /* top level */
-                    absolute_path = path;// + sub_path;
+                    absolute_path = spath;// + sub_path;
                     
                     escape_path(sub_path);
                     wcs_to_utf8(sub_path, relative_path);
@@ -795,7 +835,7 @@ static void get_subpaths(
                     
                 }else{
                     /* not top level */
-                    wstring base_path = path.substr(0, path.size() - 1);
+                    uastring base_path = spath.substr(0, spath.size() - 1);
                     absolute_path = base_path + sub_path;
                     
                     sub_path = base_path.substr(absolutePathOffset + 2) + sub_path;
@@ -806,13 +846,13 @@ static void get_subpaths(
                     
                     bool is_hidden = (GetFileAttributes(absolute_path.c_str()) & FILE_ATTRIBUTE_HIDDEN) == FILE_ATTRIBUTE_HIDDEN;
                     is_hidden |= (relative_path.at(0) == '.');/* invisible folder for mac */
-                    is_hidden |= (relative_path.find("/.") != string::npos);/* invisible folder in path */
+                    is_hidden |= (relative_path.find("/.") != pathstring::npos);/* invisible folder in path */
                     
                     if(!(!skipHidden & is_hidden))
                     {
                         absolute_paths->push_back(absolute_path);
                         
-                        if(!without_enclosing_folder)
+                        if(keepParent)
                         {
                             relative_paths->push_back(relative_path);
                         }else{
@@ -839,24 +879,25 @@ static void get_subpaths(
 
 static void get_subpaths(
                          uastring& spath,
-                         uastrings *relative_paths,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent) {
  
-    uastring folder_name;
+    pathstring folder_name;
     
+	size_t absolutePathOffset = 0;
     get_subpaths(spath,
-                 absolute_paths,
                  relative_paths,
+                 absolute_paths,
                  folder_name,
                  skipHidden,
-                 keepParent);
+                 keepParent, absolutePathOffset);
 }
 #endif
 
-static void get_subpaths(PA_CollectionRef src,
-                         uastrings *relative_paths,
+static void get_subpaths_colletion(PA_CollectionRef src,
+                         pathstrings *relative_paths,
                          uastrings *absolute_paths,
                          bool skipHidden,
                          bool keepParent) {
@@ -888,6 +929,9 @@ static void get_subpaths(PA_CollectionRef src,
                 std::wstring path;
                 if((u.fLength) && (u.fString)) {
                     path = std::wstring((const wchar_t *)PA_GetUnistring(&u));
+
+					if (path.at(path.size() - 1) == L'\\')
+						path = path.substr(0, path.size() - 1);
                 }
 #endif
                 get_subpaths(path,
@@ -1004,6 +1048,11 @@ static bool set_file_info(struct archive_entry *f, uastring& absolute_path) {
     archive_entry_set_perm(f, 644);
 #endif
     
+    
+    
+    
+    
+    
     return isFile;
 }
 
@@ -1023,6 +1072,25 @@ static bool set_file_size(struct archive_entry *f, FILE *fd) {
     }
     
     return success;
+}
+
+static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath) {
+  
+#if VERSIONMAC
+    const char    *filename = archive_entry_pathname_utf8(f);
+#else
+    const wchar_t *filename = archive_entry_pathname_w   (f);
+#endif
+    
+    collection_push(paths, filename);
+        
+#if VERSIONMAC
+    uastring fullpath = dstPath + (const char *)   filename;
+    archive_entry_set_pathname_utf8(f, fullpath.c_str());
+#else
+    uastring fullpath = dstPath + (const wchar_t *)filename;
+    archive_entry_copy_pathname_w  (f, fullpath.c_str());
+#endif
 }
 
 #pragma mark -
@@ -1057,14 +1125,20 @@ static void archive_write(PA_PluginParameters params) {
         }
         
     }
-    
+#if DEBUG_RETURN_WARNINGS
     PA_CollectionRef warnings = PA_CreateCollection();
-    PA_CollectionRef paths = PA_CreateCollection();
+#else
+    void *warnings = NULL;
+#endif
     
-    uastrings relative_paths;
+#if DEBUG_RETURN_PATHS
+    PA_CollectionRef paths = PA_CreateCollection();
+#endif
+    
+    pathstrings relative_paths;
     uastrings absolute_paths;
     
-    get_subpaths(src,
+	get_subpaths_colletion(src,
                  &relative_paths,
                  &absolute_paths,
                  skipHidden,
@@ -1074,13 +1148,16 @@ static void archive_write(PA_PluginParameters params) {
     
     //--end of preparation
  
+    la_int64_t total_progress = 0;
+    la_int64_t total_size     = 0;
+    la_int64_t item_count     = 0;
+    
     uastring dstPath;
     
     int r = ARCHIVE_OK;
     
     struct archive *a = archive_write_new();
     archive_write_disk_set_options(a, flags);
-    
     archive_write_set_format_7zip(a);//default=7zip
     
     if(options) {
@@ -1089,7 +1166,23 @@ static void archive_write(PA_PluginParameters params) {
             archive_write_set_format_filter_by_ext(a, (const char *)ext.c_str());
         }
     }
-
+    
+    if(archive_format(a) == ARCHIVE_FORMAT_ZIP) {
+        CUTF8String passphrase;
+        if(ob_get_s(options, L"passphrase", &passphrase)) {
+            archive_read_add_passphrase(a, (const char *)passphrase.c_str());
+        }
+        CUTF8String compression;
+        if(ob_get_s(options, L"compression", &compression)) {
+            if(compression == (const uint8_t *)"store") {
+                archive_write_zip_set_compression_store(a);
+            }
+            if(compression == (const uint8_t *)"deflate") {
+                archive_write_zip_set_compression_deflate(a);
+            }
+        }
+    }
+    
     /*
      
      list of formats
@@ -1120,8 +1213,15 @@ static void archive_write(PA_PluginParameters params) {
         size_t count = relative_paths.size();
                 
         for (size_t i = 0; i < count; ++i) {
+            uastring absolute_path = absolute_paths.at(i);
+            total_size += get_file_size(absolute_path);
+        }
+        
+        ob_set_n(status, L"total", total_size);
+        
+        for (size_t i = 0; i < count; ++i) {
             
-            uastring relative_path = relative_paths.at(i);
+            pathstring relative_path = relative_paths.at(i);
             uastring absolute_path = absolute_paths.at(i);
             
             FILE *fd = open_path(r, a, f, relative_path, absolute_path);
@@ -1132,12 +1232,15 @@ static void archive_write(PA_PluginParameters params) {
                 if (r < ARCHIVE_OK) {
                     processing = check_warning(processing, r, a, warnings);
                     if(!processing) {
+#if DEBUG_RETURN_ERROR
                         ob_set_s(status, L"error", archive_error_string(a));
+#endif
                         break;
                     }
                 }else{
                     size_t len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
                     while ( len > 0 ) {
+                        total_progress += len;
                         archive_write_data(a, buf, len);
                         len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
                     }
@@ -1145,29 +1248,65 @@ static void archive_write(PA_PluginParameters params) {
                 }
                 fclose(fd);
             }
-
+            item_count++;
+#if DEBUG_RETURN_PATHS
             collection_push(paths, relative_path.c_str());
-
+#endif
             archive_entry_clear(f);
         }
         
-        if(count == PA_GetCollectionLength(paths)) {
+        if(count == item_count) {
             ob_set_b(status, L"success", true);
         }
         
+        ob_set_n(status, L"prgoress", total_progress);
+        
         archive_entry_free(f);
 
+#if DEBUG_RETURN_WARNINGS
         if(PA_GetCollectionLength(warnings) != 0) {
             ob_set_c(status, L"warnings", warnings);
         }else{
             PA_DisposeCollection(warnings);
         }
-        
+#endif
+
+#if DEBUG_RETURN_PATHS
         ob_set_c(status, L"paths", paths);
+#endif
     }
 
     archive_write_close(a);
     archive_write_free(a);
     
     PA_ReturnObject(params, status);
+}
+
+static la_int64_t get_file_size(uastring& absolute_path) {
+    
+    la_int64_t file_size = 0;
+    
+    FILE *fd = NULL;
+    
+#if VERSIONMAC
+    fd = fopen  (absolute_path.c_str(),  "rb");
+#else
+    fd = _wfopen(absolute_path.c_str(), L"rb");
+#endif
+    
+    if(fd) {
+        fseek(fd, 0L, SEEK_END);
+        long size = ftell(fd);
+        fseek(fd, 0L, SEEK_SET);
+        
+        if(size == -1L) {
+
+        }else{
+            file_size += size;
+        }
+        
+        fclose(fd);
+    }
+    
+    return file_size;
 }
