@@ -63,4 +63,4 @@ difference seems to be from platform specific attributes.
 the app lanches successfully.
 
 * Tested wth 4D.app (v17.5)
-* 438,375,138 
+* 438,375,138 same as Finder double click
