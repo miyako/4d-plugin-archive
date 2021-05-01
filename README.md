@@ -71,7 +71,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.bz2
   * .tar.xz
 
- #### Archive Test (no flags)
+ #### Archive Test
  
 * Tested wth 4D.app (v17.5)
 * 2,667 files 
@@ -84,6 +84,8 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 `4D.app/Content` size is identical (438,375,138)  
 difference seems to be from platform specific attributes.  
 the app lanches successfully.
+
+#### Unarchive Test
 
 * Tested wth 4D.app (v17.5)
 * 438,375,138 same as Finder double click
