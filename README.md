@@ -28,8 +28,8 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 * Definition of hidden item on Mac:
  
   * `NSURL` `-getResourceValue:forKey:NSURLIsHiddenKeyerror:`
-  * `path.at(0) == '.')`
-  * `path.find("/.") != std::string::npos)`
+  * `path.at(0) == '.'`
+  * `path.find("/.") != std::string::npos`
 
 #### Special Considerations
 
