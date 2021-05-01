@@ -31,6 +31,27 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * `path.at(0) == '.'`
   * `path.find("/.") != std::string::npos`
 
+* Options for genral purpose:
+  * noDotDot (default=false) 
+  * noAbsolutePaths (default=false)
+  * noAutoDir (default=false) 
+  * atomic (default=false)
+  * noHFSCompression (default=false)
+  * forceHFSCompression (default=false)
+  * clearNoChangeFlags (default=false)
+  * unlink (default=false)
+  * sparse (default=false)
+  * metadata (default=true)
+  * owner (default=true)
+  * time (default=true)
+  * perm (default=true)
+  * ACL (default=true)
+  * fflags (default=true)
+  * xattr (default=true)
+  * noOverWrite (default=true)
+  * noOverWriteNewer (default=true)
+  * secureSymlinks (default=true)
+
 * Options for archive:
   * skipHidden (default=false) 
   * keepParent (default=false) 
