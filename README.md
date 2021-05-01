@@ -58,6 +58,6 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 * Finder double click unarchive 
 * 438,375,138 bytes (2,307,643 smaller than original)
 
-`4D.app/Content` size is identical (438,375,138)
-difference seems to be platform specific attributes
-the app lanches
+`4D.app/Content` size is identical (438,375,138)  
+difference seems to be from platform specific attributes.  
+the app lanches successfully.
