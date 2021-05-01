@@ -57,6 +57,8 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * keepParent (default=false) 
   * format (default=.7z) 
 
+* Options for unarchive: none (automatic)
+
 * Supported formats: 
 
   * .7z
@@ -69,7 +71,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.bz2
   * .tar.xz
 
- #### Archive Test
+ #### Archive Test (no flags)
  
 * Tested wth 4D.app (v17.5)
 * 2,667 files 
