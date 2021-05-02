@@ -57,6 +57,11 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * keepParent (default=false) 
   * format (default=.7z) 
 
+* Options for .zip archive:
+
+  * passphrase
+  * compression (store or deflate)
+
 * Options for unarchive: none (automatic)
 
 * Supported formats: 
