@@ -76,7 +76,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.bz2
   * .tar.xz
 
-##### Create an archive
+##### Compress
 
 ```4d
 $file:=Folder(fk desktop folder).file("test.7z")
@@ -105,4 +105,22 @@ If ($status.uuid#Null)
 	$status:=archive abort ($uuid)
 	
 End if 
+```
+
+##### Expand
+
+```4d
+$files:=New collection
+If (Is macOS)
+	$files.push("Macintosh HD:Applications:4D v17.5:4D.app:")
+End if 
+
+If (Is Windows)
+	$files.push("C:\\Program Files\\4D\\4D v18.4\\4D")
+End if 
+
+$folder:=Folder(fk desktop folder).folder(Generate UUID)
+
+
+
 ```
