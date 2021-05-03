@@ -94,3 +94,37 @@ the app lanches successfully.
 
 * Tested wth 4D.app (v17.5)
 * 438,375,138 same as Finder double click
+
+##### Create an archive
+
+```4d
+$file:=Folder(fk desktop folder).file("test.7z")
+$folder:=Folder(fk desktop folder).folder(Generate UUID)
+$folder.create()
+
+$options:=New object
+$options.passphrase:="1234d"  //this option is only applicable for .zip; it does not work for .7z
+
+$status:=archive read ($file.platformPath;$folder.platformPath;$options)
+
+If ($status.uuid#Null)
+	
+	$uuid:=$status.uuid
+	
+	Repeat 
+		
+		$status:=archive get progress ($uuid)
+		
+		$message:=New collection($status.progress;"/";$status.total).join()
+		
+		MESSAGE($message)
+		
+	Until ($status.complete)
+	
+	$status:=archive abort ($uuid)
+	
+End if 
+```
+difference seems to be from platform specific attributes.  `
+difference seems to be from platform specific attributes.  `
+difference seems to be from platform specific attributes.  
