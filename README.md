@@ -76,7 +76,7 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.bz2
   * .tar.xz
 
-##### Compress
+#### Compress
 
 ```4d
 $file:=Folder(fk desktop folder).file("test.7z")
@@ -107,7 +107,7 @@ If ($status.uuid#Null)
 End if 
 ```
 
-##### Expand
+#### Expand
 
 ```4d
 $files:=New collection
