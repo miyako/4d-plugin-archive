@@ -27,6 +27,8 @@ The preprocessing should be relatively fast for `archive write`. The command wil
 
 By contrast, the preprocessing could be relatively slow for `archive read`. The command will add up the `archive_entry_size` of each item in the archive. Expanding a 7-zip format should be quite fast.
 
+The total size for read vs write may not match exactly, as they are each calculated using different metrics. The purpose of these values is to measure progress.
+
 #### Technology
 
 [libarchive](https://www.libarchive.org)
