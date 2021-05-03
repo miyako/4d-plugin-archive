@@ -94,6 +94,7 @@ the app lanches successfully.
 
 * Tested wth 4D.app (v17.5)
 * 438,375,138 same as Finder double click
+* difference due to extended attributes?
 
 ##### Create an archive
 
@@ -125,6 +126,3 @@ If ($status.uuid#Null)
 	
 End if 
 ```
-difference seems to be from platform specific attributes.  `
-difference seems to be from platform specific attributes.  `
-difference seems to be from platform specific attributes.  
