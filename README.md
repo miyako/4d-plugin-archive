@@ -21,6 +21,8 @@ In order not to slow down the server during compression, and in order to be perf
 
 Instead of a callback method, the plugin should run asynchronously; the command should return a reference immediately, which can be used in 4D to query status at any time.
 
+The total size is calculated first in the calling process. After that, the archive will be elegated to a new thread. 
+
 #### Technology
 
 [libarchive](https://www.libarchive.org)
@@ -77,6 +79,8 @@ Instead of a callback method, the plugin should run asynchronously; the command 
   * .tar.xz
 
 #### Compress
+
+the total size is calculated first in the calling process which may become busy for a moment. it is done by adding up `archive_entry_size` for all the items in the archive. after that, the archive will be processed in a new thread. 
 
 ```4d
 $file:=Folder(fk desktop folder).file("test.7z")
