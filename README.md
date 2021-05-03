@@ -121,6 +121,32 @@ End if
 
 $folder:=Folder(fk desktop folder).folder(Generate UUID)
 
+$options:=New object
+$options.keepParent:=True
+$options.skipHidden:=True
+$options.format:=".7z"
 
+$status:=archive write ($files;$folder.platformPath;$options)
 
+If ($status.uuid#Null)
+	
+	$uuid:=$status.uuid
+	
+	Repeat 
+		
+		$status:=archive get progress ($uuid)
+		
+		$message:=New collection($status.progress;"/";$status.total).join()
+		
+		MESSAGE($message)
+		
+		DELAY PROCESS(Current process;10)
+		
+	Until ($status.complete)
+	
+	$status:=archive abort ($uuid)
+	
+End if 
+
+ALERT("done!")
 ```
