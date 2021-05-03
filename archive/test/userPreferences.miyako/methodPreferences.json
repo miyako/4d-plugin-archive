@@ -197,22 +197,31 @@
 		"bookmarks": [],
 		"stamp": "2019-12-13T04:37:40.619Z"
 	},
-	"Sources/Methods/TEST_read.4dm": {
-		"startSelection": 10,
-		"endSelection": 10,
+	"Sources/Methods/TEST_write.4dm": {
+		"startSelection": 0,
+		"endSelection": 0,
 		"firstSelectedLine": 0,
 		"lastSelectedLine": 0,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2021-05-01T06:37:53.078Z"
+		"stamp": "2021-05-03T19:08:53.113Z"
 	},
-	"Sources/Methods/TEST_write.4dm": {
-		"startSelection": 0,
-		"endSelection": 0,
-		"firstSelectedLine": 15,
-		"lastSelectedLine": 15,
+	"Trash/Methods/(TEST_read).4dm": {
+		"startSelection": 72,
+		"endSelection": 72,
+		"firstSelectedLine": 10,
+		"lastSelectedLine": 10,
 		"folding": [],
 		"bookmarks": [],
-		"stamp": "2021-05-01T06:52:39.386Z"
+		"stamp": "2021-05-03T10:06:01.373Z"
+	},
+	"Sources/Methods/TEST_read.4dm": {
+		"startSelection": 0,
+		"endSelection": 0,
+		"firstSelectedLine": 0,
+		"lastSelectedLine": 0,
+		"folding": [],
+		"bookmarks": [],
+		"stamp": "2021-05-03T17:25:55.000Z"
 	}
 }

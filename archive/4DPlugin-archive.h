@@ -18,6 +18,18 @@
 #include "archive.h"
 #include "archive_entry.h"
 
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <future>
+
+#include "json/json.h"
+
+#if VERSIONMAC
+#include <sys/xattr.h>
+#include <sys/stat.h>
+#endif
+
 #define LIBARCHIVE_BUFFER_SIZE 10240
 
 #define DEBUG_RETURN_PATHS 0
@@ -39,13 +51,17 @@ typedef std::vector<pathstring>  pathstrings;
 static void archive_read(PA_PluginParameters params);
 static void archive_write(PA_PluginParameters params);
 static void archive_version(PA_PluginParameters params);
+static void archive_get_progress(PA_PluginParameters params);
+static void archive_abort(PA_PluginParameters params);
 
 static int set_flags(PA_ObjectRef options);
 
 static void collection_push(PA_CollectionRef c, const wchar_t *value);
 static void collection_push(PA_CollectionRef c, const char *value);
 
+static bool check_warning(bool processing, int r, struct archive *a);
 static bool check_warning(bool processing, int r, struct archive *a, PA_CollectionRef warnings);
+static bool check_eof(bool processing, int r, struct archive *a);
 static bool check_eof(bool processing, int r, struct archive *a, PA_CollectionRef warnings, PA_ObjectRef status);
 static int copy_data(struct archive *ar, struct archive *aw);
 
@@ -57,17 +73,34 @@ static bool set_file_size(struct archive_entry *f, FILE *fd);
 
 static la_int64_t get_file_size(uastring& absolute_path);
 
+static void set_pathname(struct archive_entry *f, uastring& dstPath);
 static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath);
+
+static la_int64_t get_archive_file_size(PA_ObjectRef options, C_TEXT& t);
+
+static void archive_abort_all(void);
 
 static FILE *open_path(struct archive_entry *f,
                        uastring& relative_path,
                        uastring& absolute_path);
 
+static FILE *open_path(int r,
+                       struct archive *a,
+                       struct archive_entry *f,
+                       pathstring& relative_path,
+                       uastring& absolute_path);
+
 static void get_path(C_TEXT& t, uastring& path);
 static void get_folder_path(C_TEXT& t, uastring& path);
 
+static int open_archive_src(int r, struct archive *a, uastring& path);
 static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path);
+static int open_archive_dst(int r, struct archive *a, uastring& path);
 static int open_archive_dst(int r, struct archive *a, C_TEXT& t, uastring& path);
+
+#if VERSIONMAC
+static ssize_t set_file_xattr(struct archive_entry *f, uastring& absolute_path);
+#endif
 
 #ifdef WIN32
 #include <chrono>

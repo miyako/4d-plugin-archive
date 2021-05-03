@@ -10,6 +10,10 @@
 
 #include "4DPlugin-archive.h"
 
+Json::Value libarchiveStorage;
+std::mutex libarchiveMutex;
+std::map< std::string, std::future<void> >libarchiveTasks;
+
 #pragma mark -
 
 #ifdef WIN32
@@ -92,6 +96,16 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params) {
 	{
         switch(selector)
         {
+            case kInitPlugin :
+            case kServerInitPlugin :
+
+                break;
+             
+            case kDeinitPlugin :
+            case kServerDeinitPlugin :
+                archive_abort_all();
+                break;
+                
 			// --- archive
             
 			case 1 :
@@ -103,7 +117,12 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params) {
             case 3 :
                 archive_version(params);
                 break;
-
+            case 4:
+                archive_get_progress(params);
+                break;
+            case 5:
+                archive_abort(params);
+                break;
         }
 
 	}
@@ -111,6 +130,581 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params) {
 	{
 
 	}
+}
+
+static void generateUuid(std::string &uuid) {
+    
+#if VERSIONWIN
+    RPC_WSTR str;
+    UUID uid;
+    if (UuidCreate(&uid) == RPC_S_OK) {
+        if (UuidToString(&uid, &str) == RPC_S_OK) {
+            size_t len = wcslen((const wchar_t *)str);
+            std::vector<wchar_t>buf(len);
+            memcpy(&buf[0], str, len * sizeof(wchar_t));
+            _wcsupr((wchar_t *)&buf[0]);
+            std::wstring wstr = (const wchar_t *)&buf[0];
+            wcs_to_utf8(wstr, uuid);
+            RpcStringFree(&str);
+        }
+    }
+#else
+    NSString *u = [[[NSUUID UUID]UUIDString]stringByReplacingOccurrencesOfString:@"-" withString:@""];
+    uuid = [u UTF8String];
+#endif
+}
+
+static void archive_abort_all(void) {
+        
+    for( auto it = libarchiveTasks.begin(); it != libarchiveTasks.end() ; ++it ) {
+        std::string uuid = it->first;
+        Json::Value threadCtx = libarchiveStorage[uuid];
+        if(threadCtx.isObject()) {
+            std::lock_guard<std::mutex> lock(libarchiveMutex);
+            libarchiveStorage[uuid]["abort"] = true;
+        }
+        it->second.get();
+    }
+    libarchiveTasks.clear();
+}
+
+static void archive_get_progress_and_abort(PA_PluginParameters params, bool abort = false) {
+    
+    PA_ObjectRef status  = PA_CreateObject();
+    
+    PackagePtr pParams = (PackagePtr)params->fParameters;
+    
+    C_TEXT p;
+    p.fromParamAtIndex(pParams, 1);
+    
+    CUTF8String u8;
+    p.copyUTF8String(&u8);
+    std::string uuid = (const char *)u8.c_str();
+    
+    la_int64_t total_progress = 0;
+    la_int64_t total_size = 0;
+    
+    bool complete = false;
+    bool success = false;
+    
+    Json::Value threadCtx = libarchiveStorage[uuid];
+    if(threadCtx.isObject()) {
+        std::lock_guard<std::mutex> lock(libarchiveMutex);
+        total_size = threadCtx["total"].asInt64();
+        total_progress = threadCtx["progress"].asInt64();
+        complete = threadCtx["complete"].asBool();
+        success = threadCtx["success"].asBool();
+    }
+        
+    if(abort) {
+        std::map< std::string, std::future<void> >::iterator it = libarchiveTasks.find(uuid);
+        if(it != libarchiveTasks.end()) {
+            if(1) {
+                std::lock_guard<std::mutex> lock(libarchiveMutex);
+                libarchiveStorage[uuid]["abort"] = true;
+            }
+            it->second.get();
+            libarchiveTasks.erase(it);
+        }
+        
+    }
+    
+    ob_set_b(status, L"success", success);
+    ob_set_b(status, L"complete", complete);
+    ob_set_n(status, L"progress", total_progress);
+    ob_set_n(status, L"total", total_size);
+    
+    PA_ReturnObject(params, status);
+}
+
+static void archive_get_progress(PA_PluginParameters params) {
+
+    archive_get_progress_and_abort(params);
+    
+}
+
+static void archive_abort(PA_PluginParameters params) {
+  
+    archive_get_progress_and_abort(params, true);
+
+}
+
+static void archive_write(PA_PluginParameters params) {
+    
+    PackagePtr pParams = (PackagePtr)params->fParameters;
+    
+    PA_CollectionRef src = PA_GetCollectionParameter(params, 1);
+    
+    C_TEXT dst;
+    dst.fromParamAtIndex(pParams, 2);
+    
+    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
+    PA_ObjectRef status  = PA_CreateObject();
+    
+    int flags = set_flags(options);
+    
+    bool skipHidden = false;
+    bool keepParent = false;
+    
+    std::string ext;
+    std::string compression;
+    
+    if(options) {
+        
+        //these flags can be explicitly SET
+
+        if(ob_is_defined(options, L"skipHidden")) {
+            skipHidden = ob_get_b(options, L"skipHidden");
+        }
+        
+        if(ob_is_defined(options, L"keepParent")) {
+            keepParent = ob_get_b(options, L"keepParent");
+        }
+        
+        CUTF8String stringValue;
+        
+        if(ob_get_s(options, L"format", &stringValue)) {
+            ext = (const char *)stringValue.c_str();
+        }
+
+        if(ob_get_s(options, L"compression", &stringValue)) {
+            compression = (const char *)stringValue.c_str();
+        }
+        
+    }
+    
+    pathstrings relative_paths;
+    uastrings absolute_paths;
+    
+    get_subpaths_colletion(src,
+                 &relative_paths,
+                 &absolute_paths,
+                 skipHidden,
+                 keepParent);
+    
+    la_int64_t total_progress = 0;
+    la_int64_t total_size     = 0;
+    
+    uastring dstPath;
+    get_path(dst, dstPath);
+
+    size_t count = relative_paths.size();
+            
+    for (size_t i = 0; i < count; ++i) {
+        uastring absolute_path = absolute_paths.at(i);
+        total_size += get_file_size(absolute_path);
+    }
+    
+    std::string uuid;
+    generateUuid(uuid);
+    
+    auto func = [](std::string uuid,
+                   std::string ext,
+                   std::string compression,
+                   pathstrings relative_paths,
+                   uastrings absolute_paths) {
+        
+        uastring dstPath;
+        
+        int flags = 0L;
+        
+        if(1) {
+            
+            std::lock_guard<std::mutex> lock(libarchiveMutex);
+            Json::Value threadCtx = libarchiveStorage[uuid];
+
+            if(threadCtx.isObject()) {
+#if VERSIONWIN
+                std::string dst = threadCtx["dst"].asString();
+                utf8_to_wcs(dst, dstPath);
+#else
+                dstPath = threadCtx["dst"].asString();
+#endif
+                flags = threadCtx["flags"].asInt();
+            }
+        }
+        
+        //start
+        
+        la_int64_t total_progress = 0;
+                        
+        struct archive *a = archive_write_new();
+        archive_write_disk_set_options(a, flags);
+        archive_write_set_format_7zip(a);//default=7zip
+        
+        if(ext.length()) {
+            archive_write_set_format_filter_by_ext(a, ext.c_str());
+        }
+        
+        if(archive_format(a) == ARCHIVE_FORMAT_ZIP) {
+            if(compression.length()) {
+                if(compression == "store") {
+                    archive_write_zip_set_compression_store(a);
+                }
+                if(compression == "deflate") {
+                    archive_write_zip_set_compression_deflate(a);
+                }
+            }
+        }
+        
+        int r = ARCHIVE_OK;
+        
+        r = open_archive_dst(r, a, dstPath);
+        
+        if(r == ARCHIVE_OK) {
+         
+            unsigned char buf[LIBARCHIVE_BUFFER_SIZE];
+            struct archive_entry *f = archive_entry_new();
+            
+            bool processing = true;
+            
+            size_t count = relative_paths.size();
+            
+            auto startTime = std::chrono::high_resolution_clock::now();
+            
+            for (size_t i = 0; i < count; ++i) {
+                
+                pathstring relative_path = relative_paths.at(i);
+                uastring absolute_path = absolute_paths.at(i);
+                
+                FILE *fd = open_path(r, a, f, relative_path, absolute_path);
+
+                r = archive_write_header(a, f);
+                
+                if(fd) {
+
+                    la_int64_t temp_progress = total_progress;
+                    
+                    if (r < ARCHIVE_OK) {
+                        processing = check_warning(processing, r, a);
+                        if(!processing) {
+
+                            break;
+                        }
+                    }else{
+                        size_t len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
+                        while ( len > 0 ) {
+  
+                            auto now = std::chrono::high_resolution_clock::now();
+                            auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+                            
+                            if(elapsedTime > 100)
+                            {
+                                startTime = now;
+                             
+                                std::lock_guard<std::mutex> lock(libarchiveMutex);
+                                if(libarchiveStorage[uuid].isObject()) {
+                                    libarchiveStorage[uuid]["progress"] = total_progress;
+                                    if(libarchiveStorage[uuid]["abort"].asBool()) {
+                                        i = count;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            total_progress += len;
+                            archive_write_data(a, buf, len);
+                            len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
+                        }
+                        
+                    }
+                    fclose(fd);
+#if VERSIONMAC
+                    set_file_xattr(f, absolute_path);
+#endif
+                    total_progress = temp_progress + get_file_size(absolute_path);
+                }
+
+                archive_entry_clear(f);
+            }
+            archive_entry_free(f);
+        }
+    
+        archive_write_close(a);
+        archive_write_free(a);
+        
+        //end
+        
+        if(1) {
+            std::lock_guard<std::mutex> lock(libarchiveMutex);
+            if(libarchiveStorage[uuid].isObject()) {
+                libarchiveStorage[uuid]["complete"] = true;
+                libarchiveStorage[uuid]["progress"] = total_progress;
+                la_int64_t total_size = libarchiveStorage[uuid]["total"].asInt64();
+                libarchiveStorage[uuid]["success"] = (total_progress == total_size);
+            }
+        }
+    };
+
+    Json::Value threadCtx(Json::objectValue);
+
+#if VERSIONWIN
+	std::string path;
+	wcs_to_utf8(dstPath, path);
+	threadCtx["dst"] = path;
+#else
+	threadCtx["dst"] = dstPath;
+#endif
+    threadCtx["total"] = total_size;
+    threadCtx["progress"] = total_progress;
+    threadCtx["complete"] = false;
+    threadCtx["success"] = false;
+    threadCtx["abort"] = false;
+    threadCtx["flags"] = flags;
+    
+    if(options) {
+        CUTF8String passphrase;
+        if(ob_get_s(options, L"passphrase", &passphrase)) {
+            threadCtx["passphrase"] = (const char *)passphrase.c_str();
+        }
+    }
+    
+    if(1) {
+        std::lock_guard<std::mutex> lock(libarchiveMutex);
+        libarchiveStorage[uuid] = threadCtx;
+    }
+    
+    libarchiveTasks.insert(std::map< std::string, std::future<void> >::value_type(uuid ,
+                                                                                  std::async(std::launch::async,
+                                                                                             func,
+                                                                                             uuid,
+                                                                                             ext,
+                                                                                             compression,
+                                                                                             relative_paths,
+                                                                                             absolute_paths)));
+    
+    ob_set_s(status, L"uuid", uuid.c_str());
+    ob_set_b(status, L"complete", false);
+    ob_set_b(status, L"success", false);
+    ob_set_n(status, L"progress", total_progress);
+    ob_set_n(status, L"total", total_size);
+    
+    PA_ReturnObject(params, status);
+}
+
+
+static void archive_read(PA_PluginParameters params) {
+    
+    PackagePtr pParams = (PackagePtr)params->fParameters;
+    
+    C_TEXT src;
+    src.fromParamAtIndex(pParams, 1);
+    
+    C_TEXT dst;
+    dst.fromParamAtIndex(pParams, 2);
+    
+    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
+    PA_ObjectRef status  = PA_CreateObject();
+    
+    int flags = set_flags(options);
+    
+    la_int64_t total_progress = 0;
+    la_int64_t total_size = get_archive_file_size(options, src);
+
+    uastring dstPath;
+    get_folder_path(dst, dstPath);
+    
+    uastring srcPath;
+    get_path(src, srcPath);
+    
+    std::string uuid;
+    generateUuid(uuid);
+    
+    auto func = [](std::string uuid) {
+
+        uastring dstPath;
+        uastring srcPath;
+        
+        Json::Value passphrase;
+        
+        int flags = 0L;
+        
+        if(1) {
+            
+            std::lock_guard<std::mutex> lock(libarchiveMutex);
+            Json::Value threadCtx = libarchiveStorage[uuid];
+
+            if(threadCtx.isObject()) {
+#if VERSIONWIN
+                std::string dst = threadCtx["dst"].asString();
+                std::string src = threadCtx["src"].asString();
+                utf8_to_wcs(dst, dstPath);
+                utf8_to_wcs(dst, srcPath);
+#else
+                dstPath = threadCtx["dst"].asString();
+                srcPath = threadCtx["src"].asString();
+#endif
+                passphrase = threadCtx["passphrase"];
+                flags = threadCtx["flags"].asInt();
+            }
+        }
+        
+        //start
+        
+        la_int64_t total_progress = 0;
+        
+        struct archive *a = archive_read_new();
+        archive_read_support_format_all(a);
+        archive_read_support_filter_all(a);
+        
+        if(passphrase.isString()) {
+            archive_read_add_passphrase(a, (const char *)passphrase.asString().c_str());
+        }
+        
+        struct archive *e = archive_write_disk_new();
+        archive_write_disk_set_options(e, flags);
+        archive_write_disk_set_standard_lookup(e);
+        
+        int r = ARCHIVE_OK;
+        
+        struct archive_entry *f = NULL;
+        
+        r = open_archive_src(r, a, srcPath);
+             
+        if (ARCHIVE_OK == r) {
+
+            bool processing = true;
+
+            auto startTime = std::chrono::high_resolution_clock::now();
+            
+            while (processing) {
+                
+                r = archive_read_next_header(a, &f);
+                
+                processing = check_eof(processing, r, a);
+
+                if(processing) {
+
+                    set_pathname(f, dstPath);
+
+                    r = archive_write_header(e, f);
+                    
+                    if (r < ARCHIVE_OK) {
+                        processing = check_warning(processing, r, a);
+                        if(!processing) {
+
+                        }
+                    }else{
+                        
+                        la_int64_t len = archive_entry_size(f);
+                        
+                        if (len > 0) {
+                            
+                            int r = ARCHIVE_OK;
+                            const void *buf;
+                            size_t size = 0L;
+                            la_int64_t offset;
+
+                            for (;;) {
+                              
+                                auto now = std::chrono::high_resolution_clock::now();
+                                auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+                                
+                                if(elapsedTime > 100)
+                                {
+                                    startTime = now;
+                                 
+                                    std::lock_guard<std::mutex> lock(libarchiveMutex);
+                                    if(libarchiveStorage[uuid].isObject()) {
+                                        libarchiveStorage[uuid]["progress"] = total_progress;
+                                        if(libarchiveStorage[uuid]["abort"].asBool()) {
+                                            processing = false;
+                                        }
+                                    }
+                                }
+                                
+                              r = archive_read_data_block(a, &buf, &size, &offset);
+                                
+                                if (r == ARCHIVE_EOF) {
+                                    r = ARCHIVE_OK;
+                                    break;
+                                }
+                                
+                                if (r < ARCHIVE_OK) {
+                                    break;
+                                }
+                                
+                                total_progress += size;
+                                
+                                r = (int)archive_write_data_block(e, buf, size, offset);
+                                if (r < ARCHIVE_OK) {
+                                    break;
+                                }
+  
+                            }
+
+                            processing = check_warning(processing, r, a);
+                            
+                            if(!processing) {
+
+                            }else{
+                                
+                            }
+                        }
+                        r = archive_write_finish_entry(e);
+                        processing = check_warning(processing, r, a);
+                        if(!processing) {
+
+                        }
+                    }
+                }
+            }
+            
+        }
+        
+        //end
+        
+        if(1) {
+            std::lock_guard<std::mutex> lock(libarchiveMutex);
+            if(libarchiveStorage[uuid].isObject()) {
+                libarchiveStorage[uuid]["complete"] = true;
+                libarchiveStorage[uuid]["progress"] = total_progress;
+                la_int64_t total_size = libarchiveStorage[uuid]["total"].asInt64();
+                libarchiveStorage[uuid]["success"] = (total_progress == total_size);
+            }
+        }
+    };
+
+    Json::Value threadCtx(Json::objectValue);
+#if VERSIONWIN
+	std::string path;
+	wcs_to_utf8(dstPath, path);
+	threadCtx["dst"] = path;
+	wcs_to_utf8(srcPath, path);
+	threadCtx["src"] = path;
+#else
+	threadCtx["dst"] = dstPath;
+	threadCtx["src"] = srcPath;
+#endif
+    threadCtx["total"] = total_size;
+    threadCtx["progress"] = total_progress;
+    threadCtx["complete"] = false;
+    threadCtx["success"] = false;
+    threadCtx["abort"] = false;
+    threadCtx["flags"] = flags;
+    
+    if(options) {
+        CUTF8String passphrase;
+        if(ob_get_s(options, L"passphrase", &passphrase)) {
+            threadCtx["passphrase"] = (const char *)passphrase.c_str();
+        }
+    }
+    
+    if(1) {
+        std::lock_guard<std::mutex> lock(libarchiveMutex);
+        libarchiveStorage[uuid] = threadCtx;
+    }
+    
+    libarchiveTasks.insert(std::map< std::string, std::future<void> >::value_type(uuid,
+                                                                                  std::async(std::launch::async, func, uuid)));
+                                                                                  
+    ob_set_s(status, L"uuid", uuid.c_str());
+    ob_set_b(status, L"complete", false);
+    ob_set_b(status, L"success", false);
+    ob_set_n(status, L"progress", total_progress);
+    ob_set_n(status, L"total", total_size);
+    
+    PA_ReturnObject(params, status);
 }
 
 #pragma mark -
@@ -167,6 +761,25 @@ static void collection_push(PA_CollectionRef c, const char *value) {
 
 #pragma mark -
 
+static bool check_warning(bool processing, int r, struct archive *a) {
+        
+    if (r < ARCHIVE_OK) {
+        switch (r) {
+            case ARCHIVE_RETRY:
+            case ARCHIVE_WARN:
+                break;
+            case ARCHIVE_FAILED:
+            case ARCHIVE_FATAL:
+                processing = false;
+                break;
+            default:
+                break;
+        }
+    }
+    
+    return processing;
+}
+
 static bool check_warning(bool processing, int r, struct archive *a, PA_CollectionRef warnings) {
         
     if (r < ARCHIVE_OK) {
@@ -190,10 +803,23 @@ static bool check_warning(bool processing, int r, struct archive *a, PA_Collecti
     return processing;
 }
 
+static bool check_eof(bool processing, int r, struct archive *a) {
+        
+    if (r == ARCHIVE_EOF) {
+        processing = false;
+    }
+    
+    if(processing) {
+        processing = check_warning(processing, r, a);
+    }
+    
+    return processing;
+}
+
 static bool check_eof(bool processing, int r, struct archive *a, PA_CollectionRef warnings, PA_ObjectRef status) {
         
     if (r == ARCHIVE_EOF) {
-        ob_set_b(status, L"success", true);
+//        ob_set_b(status, L"success", true);
         processing = false;
     }
     
@@ -202,7 +828,9 @@ static bool check_eof(bool processing, int r, struct archive *a, PA_CollectionRe
     }
     
     if(!processing) {
+#if DEBUG_RETURN_ERROR
         ob_set_s(status, L"error", archive_error_string(a));
+#endif
     }
 
     return processing;
@@ -297,6 +925,8 @@ static void get_folder_path(C_TEXT& t, uastring& path) {
     
     get_path(t, path);
     
+    if(path.length() != 0) {
+        
 #if VERSIONMAC
     //remove last path separator
     if(path.at(path.size() - 1) == '/')
@@ -319,19 +949,166 @@ static void get_folder_path(C_TEXT& t, uastring& path) {
             path.at(i) = L'/';
     
 #endif
+    }
+    
 }
 
-#pragma mark -
-
-static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path) {
-        
+static la_int64_t get_archive_file_size(PA_ObjectRef options, C_TEXT& t) {
+    
+    la_int64_t file_size = 0;
+            
+    uastring path;
+    
     get_path(t, path);
     
+    int r = ARCHIVE_OK;
+    
+    if(path.length() == 0) {
+        r = ARCHIVE_FATAL;
+    }else{
+        
+        struct archive *a = archive_read_new();
+        archive_read_support_format_all(a);
+        archive_read_support_filter_all(a);
+        
+        if(options) {
+            CUTF8String passphrase;
+            if(ob_get_s(options, L"passphrase", &passphrase)) {
+                archive_read_add_passphrase(a, (const char *)passphrase.c_str());
+            }
+        }
+        
 #if VERSIONMAC
     r = archive_read_open_filename  (a, (const char *)   path.c_str(), LIBARCHIVE_BUFFER_SIZE);
 #else
     r = archive_read_open_filename_w(a, (const wchar_t *)path.c_str(), LIBARCHIVE_BUFFER_SIZE);
 #endif
+        
+        if(r == ARCHIVE_OK) {
+            struct archive_entry *f = NULL;
+            
+            bool processing = true;
+            
+            while (processing) {
+                
+                int r = archive_read_next_header(a, &f);
+                
+                switch (r) {
+                    case ARCHIVE_OK:
+                        file_size += archive_entry_size(f);
+                        break;
+                    case ARCHIVE_RETRY:
+                    case ARCHIVE_WARN:
+                    case ARCHIVE_FAILED:
+                    case ARCHIVE_FATAL:
+                    case ARCHIVE_EOF:
+                        processing = false;
+                        break;
+                }
+                
+            }
+            archive_read_close(a);
+        }
+        archive_read_free(a);
+    }
+    
+    return file_size;
+}
+
+static la_int64_t get_file_size(uastring& absolute_path) {
+    
+    la_int64_t file_size = 0;
+ 
+#if VERSIONMAC
+    struct stat stat1;
+    if(0 == stat(absolute_path.c_str(), &stat1)) {
+        file_size = stat1.st_size;//same as ftell
+    }
+#if VERSIONMAC
+        ssize_t xattr = listxattr(absolute_path.c_str(), NULL, 0, XATTR_NOFOLLOW);
+        if(xattr > 0) {
+            file_size += xattr;
+        }
+#endif
+#else
+    
+    HANDLE h = CreateFile(absolute_path.c_str(),
+                          GENERIC_READ,
+                          NULL, NULL,
+                          OPEN_EXISTING,
+                          NULL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER li;
+        GetFileSizeEx(h, &li);
+        CloseHandle(h);
+        file_size = li.QuadPart;;
+    }
+#endif
+
+    /*
+     FILE *fd = NULL;
+     
+ #if VERSIONMAC
+     fd = fopen  (absolute_path.c_str(),  "rb");
+ #else
+     fd = _wfopen(absolute_path.c_str(), L"rb");
+ #endif
+     
+     if(fd) {
+         fseek(fd, 0L, SEEK_END);
+         long size = ftell(fd);
+         fseek(fd, 0L, SEEK_SET);
+         
+         if(size == -1L) {
+
+         }else{
+             file_size += size;
+         }
+         
+         fclose(fd);
+     }
+     */
+
+    return file_size;
+}
+
+#pragma mark -
+
+static int open_archive_src(int r, struct archive *a, uastring& path) {
+        
+    if(path.length() == 0) {
+        r = ARCHIVE_FATAL;
+    }else{
+#if VERSIONMAC
+    r = archive_read_open_filename  (a, (const char *)   path.c_str(), LIBARCHIVE_BUFFER_SIZE);
+#else
+    r = archive_read_open_filename_w(a, (const wchar_t *)path.c_str(), LIBARCHIVE_BUFFER_SIZE);
+#endif
+    }
+        
+    return r;
+}
+
+static int open_archive_src(int r, struct archive *a, C_TEXT& t, uastring& path) {
+        
+    get_path(t, path);
+    
+    r = open_archive_src(r, a, path);
+            
+    return r;
+}
+
+static int open_archive_dst(int r, struct archive *a, uastring& path) {
+        
+    if(path.length() == 0) {
+        r = ARCHIVE_FATAL;
+    }else{
+#if VERSIONMAC
+    r = archive_write_open_filename  (a, path.c_str());
+#else
+    r = archive_write_open_filename_w(a, path.c_str());
+#endif
+    }
     
     return r;
 }
@@ -340,13 +1117,7 @@ static int open_archive_dst(int r, struct archive *a, C_TEXT& t, uastring& path)
     
     get_path(t, path);
     
-#if VERSIONMAC
-    r = archive_write_open_filename  (a, path.c_str());
-#else
-    r = archive_write_open_filename_w(a, path.c_str());
-#endif
-    
-    return r;
+    return open_archive_dst(r, a, path);
 }
 
 #pragma mark -
@@ -362,105 +1133,9 @@ static void archive_version(PA_PluginParameters params) {
     ob_set_s(o, L"archive", archive_version_string());
     ob_set_s(o, L"lz4", archive_liblz4_version());
     
+    ob_set_n(o, L"hardware_concurrency", std::thread::hardware_concurrency());
+    
     PA_ReturnObject(params, o);
-}
-
-static void archive_read(PA_PluginParameters params) {
-
-    PackagePtr pParams = (PackagePtr)params->fParameters;
-    
-    C_TEXT src;
-    src.fromParamAtIndex(pParams, 1);
-    
-    C_TEXT dst;
-    dst.fromParamAtIndex(pParams, 2);
-    
-    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
-    PA_ObjectRef status  = PA_CreateObject();
-    
-    ob_set_b(status, L"success", false);
-
-    PA_CollectionRef warnings = PA_CreateCollection();
-    PA_CollectionRef paths = PA_CreateCollection();
-    
-    int flags = set_flags(options);
-    
-    //--end of preparation
-
-    uastring dstPath;
-    uastring srcPath;
-    
-    struct archive *a = archive_read_new();
-    archive_read_support_format_all(a);
-    archive_read_support_filter_all(a);
-    
-    struct archive *e = archive_write_disk_new();
-    archive_write_disk_set_options(e, flags);
-    archive_write_disk_set_standard_lookup(e);
-    
-    int r = ARCHIVE_OK;
-    
-    get_folder_path(dst, dstPath);
-    r = open_archive_src(r, a, src, srcPath);
-      
-    struct archive_entry *f = NULL;
-    
-    if (ARCHIVE_OK == r) {
-
-        bool processing = true;
-        
-        while (processing) {
-            
-            r = archive_read_next_header(a, &f);
-            
-            processing = check_eof(processing, r, a, warnings, status);
-
-            if(processing) {
-
-                set_pathname(f, paths, dstPath);
-
-                r = archive_write_header(e, f);
-                
-                if (r < ARCHIVE_OK) {
-                    processing = check_warning(processing, r, a, warnings);
-                    if(!processing) {
-                        ob_set_s(status, L"error", archive_error_string(a));
-                    }
-                }else{
-                    
-                    if (archive_entry_size(f) > 0) {
-                        r = copy_data(a, e);
-                        processing = check_warning(processing, r, a, warnings);
-                        if(!processing) {
-                            ob_set_s(status, L"error", archive_error_string(a));
-                        }
-                    }
-                    
-                    r = archive_write_finish_entry(e);
-                    processing = check_warning(processing, r, a, warnings);
-                    if(!processing) {
-                        ob_set_s(status, L"error", archive_error_string(a));
-                    }
-                }
-            }
-        }
-        
-        if(PA_GetCollectionLength(warnings) != 0) {
-            ob_set_c(status, L"warnings", warnings);
-        }else{
-            PA_DisposeCollection(warnings);
-        }
-                
-        ob_set_c(status, L"paths", paths);
-    }
-    
-    archive_read_close(a);
-    archive_read_free(a);
-    
-    archive_write_close(e);
-    archive_write_free(e);
-    
-    PA_ReturnObject(params, status);
 }
 
 #pragma mark -
@@ -604,7 +1279,6 @@ static int set_flags(PA_ObjectRef options) {
    
     return flags;
 }
-
 
 #pragma mark -
 
@@ -988,6 +1662,41 @@ static bool set_file_symlink(struct archive_entry *f, uastring& absolute_path) {
 }
 #endif
 
+#if VERSIONMAC
+static ssize_t set_file_xattr(struct archive_entry *f, uastring& absolute_path) {
+
+    const char *path = (const char *)absolute_path.c_str();
+    
+    ssize_t xattr = listxattr(path, NULL, 0, XATTR_NOFOLLOW);
+
+    if(xattr > 0) {
+        
+        std::vector<char> buf(xattr);
+        xattr = listxattr(path, &buf[0], xattr, XATTR_NOFOLLOW);
+        const char *key = &buf[0];
+        ssize_t len = xattr;
+        while (len > 0) {
+         
+            ssize_t vlen = getxattr(path, key, NULL, 0, 0, 0);
+            if (vlen > 0) {
+                std::vector<char> vbuf(vlen + 1);
+                vlen = getxattr(path, key, &vbuf[0], vlen, 0, 0);
+                if(vlen > 0) {
+                    archive_entry_xattr_add_entry(f, key, &vbuf[0], vlen);
+                }
+            }
+            ssize_t keylen = strlen(key) + 1;
+            len -= keylen;
+            key += keylen;
+        }
+    
+        return xattr;
+    }
+    
+    return 0;
+}
+#endif
+
 static bool set_file_info(struct archive_entry *f, uastring& absolute_path) {
     
     bool isFile = true;
@@ -1032,6 +1741,7 @@ static bool set_file_info(struct archive_entry *f, uastring& absolute_path) {
             archive_entry_set_filetype(f, AE_IFREG);
             archive_entry_set_perm(f, 644);
         }
+        
         [path release];
     }else{
         archive_entry_set_filetype(f, AE_IFREG);
@@ -1047,12 +1757,7 @@ static bool set_file_info(struct archive_entry *f, uastring& absolute_path) {
     }
     archive_entry_set_perm(f, 644);
 #endif
-    
-    
-    
-    
-    
-    
+
     return isFile;
 }
 
@@ -1074,15 +1779,15 @@ static bool set_file_size(struct archive_entry *f, FILE *fd) {
     return success;
 }
 
-static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath) {
+#pragma mark -
+
+static void set_pathname(struct archive_entry *f, uastring& dstPath) {
   
 #if VERSIONMAC
     const char    *filename = archive_entry_pathname_utf8(f);
 #else
     const wchar_t *filename = archive_entry_pathname_w   (f);
 #endif
-    
-    collection_push(paths, filename);
         
 #if VERSIONMAC
     uastring fullpath = dstPath + (const char *)   filename;
@@ -1093,220 +1798,23 @@ static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastr
 #endif
 }
 
-#pragma mark -
-
-static void archive_write(PA_PluginParameters params) {
-
-    PackagePtr pParams = (PackagePtr)params->fParameters;
-    
-    PA_CollectionRef src = PA_GetCollectionParameter(params, 1);
-    
-    C_TEXT dst;
-    dst.fromParamAtIndex(pParams, 2);
-    
-    PA_ObjectRef options = PA_GetObjectParameter(params, 3);
-    PA_ObjectRef status  = PA_CreateObject();
-    
-    ob_set_b(status, L"success", false);
-    
-    bool skipHidden = false;
-    bool keepParent = false;
-    
-    if(options) {
-        
-        //these flags can be explicitly SET
-
-        if(ob_is_defined(options, L"skipHidden")) {
-            skipHidden = ob_get_b(options, L"skipHidden");
-        }
-        
-        if(ob_is_defined(options, L"keepParent")) {
-            keepParent = ob_get_b(options, L"keepParent");
-        }
-        
-    }
-#if DEBUG_RETURN_WARNINGS
-    PA_CollectionRef warnings = PA_CreateCollection();
+static void set_pathname(struct archive_entry *f, PA_CollectionRef paths,  uastring& dstPath) {
+  
+#if VERSIONMAC
+    const char    *filename = archive_entry_pathname_utf8(f);
 #else
-    void *warnings = NULL;
+    const wchar_t *filename = archive_entry_pathname_w   (f);
 #endif
     
 #if DEBUG_RETURN_PATHS
-    PA_CollectionRef paths = PA_CreateCollection();
+    collection_push(paths, filename);
 #endif
-    
-    pathstrings relative_paths;
-    uastrings absolute_paths;
-    
-	get_subpaths_colletion(src,
-                 &relative_paths,
-                 &absolute_paths,
-                 skipHidden,
-                 keepParent);
-        
-    int flags = set_flags(options);
-    
-    //--end of preparation
- 
-    la_int64_t total_progress = 0;
-    la_int64_t total_size     = 0;
-    la_int64_t item_count     = 0;
-    
-    uastring dstPath;
-    
-    int r = ARCHIVE_OK;
-    
-    struct archive *a = archive_write_new();
-    archive_write_disk_set_options(a, flags);
-    archive_write_set_format_7zip(a);//default=7zip
-    
-    if(options) {
-        CUTF8String ext;
-        if(ob_get_s(options, L"format", &ext)) {
-            archive_write_set_format_filter_by_ext(a, (const char *)ext.c_str());
-        }
-    }
-    
-    if(archive_format(a) == ARCHIVE_FORMAT_ZIP) {
-        CUTF8String passphrase;
-        if(ob_get_s(options, L"passphrase", &passphrase)) {
-            archive_read_add_passphrase(a, (const char *)passphrase.c_str());
-        }
-        CUTF8String compression;
-        if(ob_get_s(options, L"compression", &compression)) {
-            if(compression == (const uint8_t *)"store") {
-                archive_write_zip_set_compression_store(a);
-            }
-            if(compression == (const uint8_t *)"deflate") {
-                archive_write_zip_set_compression_deflate(a);
-            }
-        }
-    }
-    
-    /*
-     
-     list of formats
-     
-     .7z
-     .zip = .jar
-     .cpio
-     .iso
-     .a = .ar
-     .tar
-     .tgz = .tar.gz
-     .tar.bz2
-     .tar.xz
-    
-     */
-    
-    //TODO: run this part in a thread
-    
-    r = open_archive_dst(r, a, dst, dstPath);
-            
-    if(r == ARCHIVE_OK) {
-        
-        unsigned char buf[LIBARCHIVE_BUFFER_SIZE];
-        struct archive_entry *f = archive_entry_new();
-        
-        bool processing = true;
-        
-        size_t count = relative_paths.size();
-                
-        for (size_t i = 0; i < count; ++i) {
-            uastring absolute_path = absolute_paths.at(i);
-            total_size += get_file_size(absolute_path);
-        }
-        
-        ob_set_n(status, L"total", total_size);
-        
-        for (size_t i = 0; i < count; ++i) {
-            
-            pathstring relative_path = relative_paths.at(i);
-            uastring absolute_path = absolute_paths.at(i);
-            
-            FILE *fd = open_path(r, a, f, relative_path, absolute_path);
-
-            r = archive_write_header(a, f);
-            
-            if(fd) {
-                if (r < ARCHIVE_OK) {
-                    processing = check_warning(processing, r, a, warnings);
-                    if(!processing) {
-#if DEBUG_RETURN_ERROR
-                        ob_set_s(status, L"error", archive_error_string(a));
-#endif
-                        break;
-                    }
-                }else{
-                    size_t len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
-                    while ( len > 0 ) {
-                        total_progress += len;
-                        archive_write_data(a, buf, len);
-                        len = fread(buf, 1, LIBARCHIVE_BUFFER_SIZE, fd);
-                    }
-                    
-                }
-                fclose(fd);
-            }
-            item_count++;
-#if DEBUG_RETURN_PATHS
-            collection_push(paths, relative_path.c_str());
-#endif
-            archive_entry_clear(f);
-        }
-        
-        if(count == item_count) {
-            ob_set_b(status, L"success", true);
-        }
-        
-        ob_set_n(status, L"prgoress", total_progress);
-        
-        archive_entry_free(f);
-
-#if DEBUG_RETURN_WARNINGS
-        if(PA_GetCollectionLength(warnings) != 0) {
-            ob_set_c(status, L"warnings", warnings);
-        }else{
-            PA_DisposeCollection(warnings);
-        }
-#endif
-
-#if DEBUG_RETURN_PATHS
-        ob_set_c(status, L"paths", paths);
-#endif
-    }
-
-    archive_write_close(a);
-    archive_write_free(a);
-    
-    PA_ReturnObject(params, status);
-}
-
-static la_int64_t get_file_size(uastring& absolute_path) {
-    
-    la_int64_t file_size = 0;
-    
-    FILE *fd = NULL;
     
 #if VERSIONMAC
-    fd = fopen  (absolute_path.c_str(),  "rb");
+    uastring fullpath = dstPath + (const char *)   filename;
+    archive_entry_set_pathname_utf8(f, fullpath.c_str());
 #else
-    fd = _wfopen(absolute_path.c_str(), L"rb");
+    uastring fullpath = dstPath + (const wchar_t *)filename;
+    archive_entry_copy_pathname_w  (f, fullpath.c_str());
 #endif
-    
-    if(fd) {
-        fseek(fd, 0L, SEEK_END);
-        long size = ftell(fd);
-        fseek(fd, 0L, SEEK_SET);
-        
-        if(size == -1L) {
-
-        }else{
-            file_size += size;
-        }
-        
-        fclose(fd);
-    }
-    
-    return file_size;
 }

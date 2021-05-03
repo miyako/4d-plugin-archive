@@ -16,6 +16,16 @@
             "theme": "archive",
             "syntax": "archive version:J",
             "threadSafe": true
+        },
+        {
+            "theme": "archive",
+            "syntax": "archive get progress(&T):J",
+            "threadSafe": true
+        },
+        {
+            "theme": "archive",
+            "syntax": "archive abort(&T):J",
+            "threadSafe": true
         }
     ]
 }
