@@ -80,8 +80,6 @@ The total size is calculated first in the calling process. After that, the archi
 
 #### Compress
 
-the total size is calculated first in the calling process which may become busy for a moment. it is done by adding up `archive_entry_size` for all the items in the archive. after that, the archive will be processed in a new thread. 
-
 ```4d
 $file:=Folder(fk desktop folder).file("test.7z")
 $folder:=Folder(fk desktop folder).folder(Generate UUID)
