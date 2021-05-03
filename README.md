@@ -23,6 +23,10 @@ Instead of a callback method, the plugin should run asynchronously; the command 
 
 The total size is calculated first in the calling process. After that, the archive will be elegated to a new thread. 
 
+The preprocessing should be relatively fast for `archive write`. The command will add up the actual file size as well as the extended attributes on Mac. Creating a 7-zip format will take more time, since .7z requires intense usage of the CPU.
+
+By contrast, the preprocessing could be relatively slow for `archive read`. The command will add up the `archive_entry_size` of each item in the archive. Expanding a 7-zip format should be quite fast.
+
 #### Technology
 
 [libarchive](https://www.libarchive.org)
