@@ -21,7 +21,7 @@ In order not to slow down the server during compression, and in order to be perf
 
 Instead of a callback method, the plugin should run asynchronously; the command should return a reference immediately, which can be used in 4D to query status at any time.
 
-The total size is calculated first in the calling process. After that, the archive will be elegated to a new thread. 
+The total size is calculated first in the calling process. After that, the archive will be delegated to a new thread. 
 
 The preprocessing should be relatively fast for `archive write`. The command will add up the actual file size as well as the extended attributes on Mac. Creating a 7-zip format will take more time, since .7z requires intense usage of the CPU.
 
@@ -39,7 +39,8 @@ The total size for read vs write may not match exactly, as they are each calcula
   * `path.at(0) == '.'`
   * `path.find("/.") != std::string::npos`
 
-* Options for genral purpose:
+* Options for general purpose:
+ 
   * noDotDot (default=false) 
   * noAbsolutePaths (default=false)
   * noAutoDir (default=false) 
@@ -61,17 +62,19 @@ The total size for read vs write may not match exactly, as they are each calcula
   * secureSymlinks (default=true)
 
 * Options for archive:
+ 
   * skipHidden (default=false) 
   * keepParent (default=false) 
   * format (default=.7z) 
 
 * Options for .zip archive:
+ 
+  * compression (store or deflate)
+  
+* Options for zip unarchive:
 
   * passphrase
-  * compression (store or deflate)
-
-* Options for unarchive: none (automatic)
-
+   
 * Supported formats: 
 
   * .7z
@@ -155,6 +158,4 @@ If ($status.uuid#Null)
 	$status:=archive abort ($uuid)
 	
 End if 
-
-ALERT("done!")
 ```
