@@ -140,10 +140,10 @@ static void generateUuid(std::string &uuid) {
     if (UuidCreate(&uid) == RPC_S_OK) {
         if (UuidToString(&uid, &str) == RPC_S_OK) {
             size_t len = wcslen((const wchar_t *)str);
-            std::vector<wchar_t>buf(len);
+            std::vector<wchar_t>buf(len+1);
             memcpy(&buf[0], str, len * sizeof(wchar_t));
             _wcsupr((wchar_t *)&buf[0]);
-            std::wstring wstr = (const wchar_t *)&buf[0];
+            std::wstring wstr = std::wstring((const wchar_t *)&buf[0], len);
             wcs_to_utf8(wstr, uuid);
             RpcStringFree(&str);
         }
@@ -529,7 +529,7 @@ static void archive_read(PA_PluginParameters params) {
                 std::string dst = threadCtx["dst"].asString();
                 std::string src = threadCtx["src"].asString();
                 utf8_to_wcs(dst, dstPath);
-                utf8_to_wcs(dst, srcPath);
+                utf8_to_wcs(src, srcPath);
 #else
                 dstPath = threadCtx["dst"].asString();
                 srcPath = threadCtx["src"].asString();
@@ -945,9 +945,8 @@ static void get_folder_path(C_TEXT& t, uastring& path) {
     
     //forward slash
     for (unsigned int i = 0; i < path.size(); ++i)
-        if (path.at(i) == '\\')
+        if (path.at(i) ==L'\\')
             path.at(i) = L'/';
-    
 #endif
     }
     

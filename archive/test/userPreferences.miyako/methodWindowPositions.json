@@ -144,8 +144,8 @@
 		"height": 762
 	},
 	"Sources/Methods/TEST.4dm": {
-		"left": 61,
-		"top": 111,
+		"left": 772,
+		"top": 165,
 		"width": 877,
 		"height": 592
 	},
@@ -162,10 +162,10 @@
 		"height": 757
 	},
 	"Sources/Methods/TEST_write.4dm": {
-		"left": 224,
-		"top": 136,
-		"width": 694,
-		"height": 483
+		"left": 900,
+		"top": 229,
+		"width": 821,
+		"height": 705
 	},
 	"Trash/Methods/(TEST_read).4dm": {
 		"left": 210,
@@ -174,8 +174,8 @@
 		"height": 596
 	},
 	"Sources/Methods/TEST_read.4dm": {
-		"left": 173,
-		"top": 312,
+		"left": 89,
+		"top": 202,
 		"width": 694,
 		"height": 483
 	}

@@ -53,13 +53,13 @@
 			}
 		},
 		"TEST": {
-			"timeStamp": "2021-04-30T15:24:34.000Z"
+			"timeStamp": "2021-05-03T19:29:31.000Z"
 		},
 		"TEST_read": {
 			"timeStamp": "2021-05-03T17:25:55.000Z"
 		},
 		"TEST_write": {
-			"timeStamp": "2021-05-03T19:08:53.113Z"
+			"timeStamp": "2021-05-03T19:08:53.000Z"
 		},
 		"update_manifest_json": {
 			"timeStamp": "2019-12-13T04:37:40.000Z",
@@ -67,9 +67,6 @@
 				"invisible": true,
 				"preemptive": "capable"
 			}
-		},
-		"(TEST_read)": {
-			"timeStamp": "2021-05-03T10:06:01.000Z"
 		}
 	}
 }
